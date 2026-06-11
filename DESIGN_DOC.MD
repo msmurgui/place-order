@@ -664,7 +664,7 @@ Sequential commits. Each item is roughly one logical unit of work.
 - [x] Repositories — `OrderRepository`, `OrderItemRepository`, `ProductRepository`, `WarehouseRepository`, `InventoryRepository`, `ReservationRepository`, `IdempotencyRepository`
 - [x] Utilities — `haversine.ts`, `retry.ts`, `logger.ts` (pino)
 - [x] `DistributedLockService` — Redis `SET NX EX` wrapper with `acquire` / `release`
-- [ ] Mock gateways — `GeocodingGateway`, `PaymentGateway` (with `PaymentDeclinedError` hook), `TaxGateway` (with `TaxCalculationError` hook)
+- [x] Mock gateways — `GeocodingGateway`, `PaymentGateway` (with `PaymentDeclinedError` hook), `TaxGateway` (with `TaxCalculationError` hook)
 - [ ] `GeocodeService` — Redis cache wrapper; circuit breaker checked on cache miss only
 - [ ] `WarehouseSelectionService` — eligible warehouse query + haversine sort
 - [ ] `ReservationService` — per-product lock (check + insert within lock window), confirm, release
