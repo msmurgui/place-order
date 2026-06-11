@@ -1,17 +1,25 @@
-import { Redis } from 'ioredis';
+import { redisClient } from '../redis';
 
 const KEY_PREFIX = 'idempotency:';
 
-export class IdempotencyRepository {
-  constructor(private readonly redis: Redis) {}
-
+class _IdempotencyRepository {
   async get(key: string): Promise<Record<string, unknown> | null> {
-    const raw = await this.redis.get(`${KEY_PREFIX}${key}`);
+    const raw = await redisClient.get(`${KEY_PREFIX}${key}`);
     if (raw === null) return null;
     return JSON.parse(raw) as Record<string, unknown>;
   }
 
-  async set(key: string, value: Record<string, unknown>, ttlSeconds: number): Promise<void> {
-    await this.redis.set(`${KEY_PREFIX}${key}`, JSON.stringify(value), 'EX', ttlSeconds);
+  async set({
+    key,
+    value,
+    ttlSeconds,
+  }: {
+    key: string;
+    value: Record<string, unknown>;
+    ttlSeconds: number;
+  }): Promise<void> {
+    await redisClient.set(`${KEY_PREFIX}${key}`, JSON.stringify(value), 'EX', ttlSeconds);
   }
 }
+
+export const IdempotencyRepository = new _IdempotencyRepository();
