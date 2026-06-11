@@ -10,7 +10,7 @@ export const AppDataSource = new DataSource({
   username: env.DB_USER,
   password: env.DB_PASSWORD,
   synchronize: false,
-  logging: env.NODE_ENV === 'development',
+  logging: false,
   entities: [`${__dirname}/../entities/*.{ts,js}`],
   migrations: [`${__dirname}/migrations/*.{ts,js}`],
   migrationsTableName: 'typeorm_migrations',

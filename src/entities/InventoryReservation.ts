@@ -8,11 +8,8 @@ export class InventoryReservation {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @Column({ name: 'warehouse_id' })
-  warehouseId!: number;
-
-  @Column({ name: 'product_id' })
-  productId!: number;
+  @Column({ name: 'inventory_id' })
+  inventoryId!: number;
 
   @Column({ name: 'order_id' })
   orderId!: number;

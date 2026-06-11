@@ -1,13 +1,17 @@
-import { Entity, PrimaryColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, Unique } from 'typeorm';
 import { Warehouse } from './Warehouse';
 import { Product } from './Product';
 
+@Unique(['warehouseId', 'productId'])
 @Entity('inventories')
 export class Inventory {
-  @PrimaryColumn({ name: 'warehouse_id' })
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ name: 'warehouse_id' })
   warehouseId!: number;
 
-  @PrimaryColumn({ name: 'product_id' })
+  @Column({ name: 'product_id' })
   productId!: number;
 
   @Column({ type: 'int' })
