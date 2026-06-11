@@ -14,7 +14,7 @@ async function verifyRepositories(): Promise<void> {
   const products = await ProductRepository.findByIds([1, 2, 3]);
   console.log('Products:', JSON.stringify(products, null, 2));
 
-  const available = await InventoryRepository.getAvailable(1, 1);
+  const available = await InventoryRepository.getAvailable({ warehouseId: 1, productId: 1 });
   console.log('Available stock (warehouse 1, product 1):', available);
 
   await AppDataSource.destroy();

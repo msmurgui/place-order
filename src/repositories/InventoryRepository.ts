@@ -11,7 +11,13 @@ class _InventoryRepository extends BaseRepository<Inventory> {
     super(Inventory);
   }
 
-  async getAvailable(warehouseId: number, productId: number): Promise<AvailabilityResult | null> {
+  async getAvailable({
+    warehouseId,
+    productId,
+  }: {
+    warehouseId: number;
+    productId: number;
+  }): Promise<AvailabilityResult | null> {
     const rows = await this.dataSource.query<{ inventory_id: string; available: string }[]>(
       `SELECT i.id AS inventory_id,
               i.quantity - COALESCE(SUM(r.quantity), 0) AS available

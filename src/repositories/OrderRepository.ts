@@ -24,11 +24,15 @@ class _OrderRepository extends BaseRepository<Order> {
     return this.repo.save(this.repo.create(data));
   }
 
-  async updateStatus(
-    orderId: number,
-    status: OrderStatus,
-    paymentReference?: string
-  ): Promise<void> {
+  async updateStatus({
+    orderId,
+    status,
+    paymentReference,
+  }: {
+    orderId: number;
+    status: OrderStatus;
+    paymentReference?: string;
+  }): Promise<void> {
     const update: Partial<Order> = { status };
     if (paymentReference !== undefined) {
       update.paymentReference = paymentReference;
