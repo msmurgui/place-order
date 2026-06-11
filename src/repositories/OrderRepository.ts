@@ -1,0 +1,52 @@
+import { Order, OrderStatus, ReceiptSnapshot } from '../entities/Order';
+import { BaseRepository } from './BaseRepository';
+
+export interface InsertOrderData {
+  customerId: number;
+  warehouseId: number;
+  warehouseName: string;
+  warehouseAddress: string;
+  shippingAddress: string;
+  subtotal: number;
+  taxAmount: number;
+  total: number;
+  status: OrderStatus;
+  idempotencyKey: string;
+  receiptSnapshot: ReceiptSnapshot;
+}
+
+class _OrderRepository extends BaseRepository<Order> {
+  constructor() {
+    super(Order);
+  }
+
+  async insert(data: InsertOrderData): Promise<Order> {
+    return this.repo.save(this.repo.create(data));
+  }
+
+  async updateStatus(
+    orderId: number,
+    status: OrderStatus,
+    paymentReference?: string
+  ): Promise<void> {
+    const update: Partial<Order> = { status };
+    if (paymentReference !== undefined) {
+      update.paymentReference = paymentReference;
+    }
+    await this.repo.update(orderId, update);
+  }
+
+  async findByIdempotencyKey(key: string): Promise<Order | null> {
+    return this.repo.findOneBy({ idempotencyKey: key });
+  }
+
+  async findStalePending(): Promise<Order[]> {
+    return this.repo
+      .createQueryBuilder('order')
+      .where('order.status = :status', { status: 'PENDING_PAYMENT' })
+      .andWhere("order.createdAt < NOW() - INTERVAL '5 minutes'")
+      .getMany();
+  }
+}
+
+export const OrderRepository = new _OrderRepository();
