@@ -4,7 +4,11 @@ import { env } from '../config/env';
 
 export const AppDataSource = new DataSource({
   type: 'postgres',
-  url: env.DB_URL,
+  host: env.DB_HOST,
+  port: env.DB_PORT,
+  database: env.DB_NAME,
+  username: env.DB_USER,
+  password: env.DB_PASSWORD,
   synchronize: false,
   logging: env.NODE_ENV === 'development',
   entities: [`${__dirname}/../entities/*.{ts,js}`],
