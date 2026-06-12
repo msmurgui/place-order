@@ -1,9 +1,9 @@
-import { Warehouse } from '../entities/Warehouse';
-import { InventoryRepository } from '../repositories/InventoryRepository';
-import { WarehouseRepository } from '../repositories/WarehouseRepository';
-import { getDistanceBetweenCoordinates } from '../util/getDistanceBetweenCoordinates';
-import { NoWarehouseAvailableError } from '../util/errors';
-import { GeocodeService } from './GeocodeService';
+import { Warehouse } from '../../entities/Warehouse';
+import { InventoryRepository } from '../../repositories/InventoryRepository';
+import { WarehouseRepository } from '../../repositories/WarehouseRepository';
+import { getDistanceBetweenCoordinates } from '../../util/getDistanceBetweenCoordinates';
+import { NoWarehouseAvailableError } from '../../util/errors';
+import { GeocodeService } from '../GeocodeService';
 
 interface OrderItem {
   productId: number;
