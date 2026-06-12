@@ -11,3 +11,10 @@ export class InsufficientInventoryError extends Error {
     this.name = 'InsufficientInventoryError';
   }
 }
+
+export class NoWarehouseAvailableError extends Error {
+  constructor() {
+    super('No warehouse can fulfill this order');
+    this.name = 'NoWarehouseAvailableError';
+  }
+}

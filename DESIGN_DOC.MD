@@ -666,7 +666,7 @@ Sequential commits. Each item is roughly one logical unit of work.
 - [x] `DistributedLockService` — Redis `SET NX EX` wrapper with `acquire` / `release`
 - [x] Mock gateways — `GeocodingGateway`, `PaymentGateway` (with `PaymentDeclinedError` hook), `TaxGateway` (with `TaxCalculationError` hook)
 - [x] `GeocodeService` — Redis cache wrapper; circuit breaker checked on cache miss only
-- [ ] `WarehouseSelectionService` — eligible warehouse query + haversine sort
+- [x] `WarehouseSelectionService` — eligible warehouse query + haversine sort
 - [ ] `ReservationService` — per-product lock (check + insert within lock window), confirm, release
 - [ ] `OrderService` (Facade) — orchestrates subtotal, warehouse selection, tax, reservation, payment, compensation, dead-letter queue
 - [ ] Middleware — `rateLimiter.ts` (per-customer sliding window), `circuitBreaker.ts` (Redis flag reader)

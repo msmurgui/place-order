@@ -1,7 +1,7 @@
 import { Inventory } from '../entities/Inventory';
 import { BaseRepository } from './BaseRepository';
 
-export interface AvailabilityResult {
+export interface AvailableInventory {
   inventoryId: number;
   available: number;
 }
@@ -17,7 +17,7 @@ class _InventoryRepository extends BaseRepository<Inventory> {
   }: {
     warehouseId: number;
     productId: number;
-  }): Promise<AvailabilityResult | null> {
+  }): Promise<AvailableInventory | null> {
     const rows = await this.dataSource.query<{ inventory_id: string; available: string }[]>(
       `SELECT i.id AS inventory_id,
               i.quantity - COALESCE(SUM(r.quantity), 0) AS available
