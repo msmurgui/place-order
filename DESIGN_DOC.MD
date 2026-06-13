@@ -106,7 +106,7 @@ src/
 │   └── orders.ts
 │
 ├── middleware/
-│   ├── rateLimiter.ts                      ← per-customer sliding window, Redis-backed
+│   ├── rateLimiter.ts                      ← per-customer's id sliding window, Redis-backed
 │   └── circuitBreaker.ts                   ← Redis-backed boolean flags per gateway
 │
 ├── gateways/
@@ -364,7 +364,7 @@ Circuit breaker flag `circuit:tax` checked before every call. Maps to `503` if o
 `POST /orders` middleware pipeline:
 
 ```
-1. rateLimiter middleware       ← 5 req / 60s sliding window, keyed on customerId
+1. rateLimiter middleware       ← 5 req / 60s sliding window, keyed on customer's IP
 2. Zod schema validation        ← rejects malformed requests before hitting controller
 3. orderController.createOrder  ← delegates to controller
 ```
