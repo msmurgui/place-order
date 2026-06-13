@@ -73,12 +73,17 @@ class _OrderRepository extends BaseRepository<Order> {
     return result.affected ?? 0;
   }
 
-  async findStalePending(): Promise<Order[]> {
-    return this.repo
+  async findStalePending({ limit }: { limit?: number } = {}): Promise<Order[]> {
+    const qb = this.repo
       .createQueryBuilder('order')
       .where('order.status = :status', { status: 'PENDING_PAYMENT' })
-      .andWhere("order.createdAt < NOW() - INTERVAL '5 minutes'")
-      .getMany();
+      .andWhere("order.createdAt < NOW() - INTERVAL '5 minutes'");
+
+    if (limit !== undefined) {
+      qb.take(limit);
+    }
+
+    return qb.getMany();
   }
 }
 
