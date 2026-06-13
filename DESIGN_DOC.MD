@@ -1,5 +1,17 @@
 # Plan: POST /orders — Production-Ready Order Endpoint
 
+## Overview
+
+This service exposes a single `POST /orders` endpoint for an e-commerce platform. It accepts a customer's order (shipping address, items, and payment details), selects the optimal warehouse to fulfil the order, reserves the required inventory atomically, applies jurisdiction-based tax, processes payment, and returns a confirmed order with a full receipt snapshot.
+
+Key guarantees:
+- **Inventory safety** — append-only reservation table with per-SKU distributed locks prevents overselling under concurrent load.
+- **Idempotency** — duplicate submissions (retries, double-clicks, network timeouts) return the original response without re-charging.
+- **Financial consistency** — payment charges that cannot be immediately confirmed land in a `PENDING_PAYMENT` state and are reconciled by a background job rather than being incorrectly failed.
+- **Resilience** — circuit breakers on all external gateways, retry logic for transient failures, and a dead-letter queue for unresolvable compensation failures.
+
+---
+
 ## Context
 
 Standalone endpoint for warehouse-based order fulfillment. A customer submits an order (shipping address + items + credit card); the server selects the closest warehouse that can fulfill all items, reserves inventory atomically via an **append-only reservation table**, charges the card inline, and returns the confirmed order.
@@ -28,11 +40,11 @@ The application is divided into four strict layers. Each layer may only call the
 ```
 ┌─────────────────────────────────────────┐
 │           Route Layer                   │  Rate limiting, schema validation,
-│       src/routes/                       │  idempotency check, calls controller
+│       src/routes/                       │  calls controller
 ├─────────────────────────────────────────┤
-│         Controller Layer                │  Thin HTTP adapter — orchestrates
-│       src/controllers/                  │  one service call, maps result to
-│                                         │  HTTP response. No DB access.
+│         Controller Layer                │  Idempotency check, thin HTTP adapter
+│       src/controllers/                  │  — orchestrates one service call,
+│                                         │  maps result to HTTP response.
 ├─────────────────────────────────────────┤
 │          Service Layer                  │  All business logic. Facade pattern:
 │        src/services/                    │  OrderService is the single entry
@@ -252,6 +264,8 @@ A DB-level consistency constraint asserts `total = subtotal + tax_amount` at wri
 ---
 
 ## Inventory Management System
+
+When multiple orders arrive simultaneously for the same product, the system must guarantee that available stock is never oversold — each order must see an accurate count of what is actually free to reserve, and two concurrent orders must not both claim the last unit. The naive approach is to lock the inventory row for the duration of each order transaction, but this serializes all concurrent orders for the same SKU and collapses throughput under load. The reservation table approach below solves both correctness and concurrency by making inventory claims append-only writes rather than row updates.
 
 ### Why not `SELECT FOR UPDATE`
 
@@ -481,7 +495,7 @@ The dead-letter queue is a BullMQ queue with no automatic retry. An alert fires 
 
 ## Idempotency
 
-The `idempotency_key` column on `orders` has a `UNIQUE` constraint as a DB-level safety net. The primary idempotency check happens in the route layer via Redis (TTL 24h) — it short-circuits before the controller is invoked, returning the original response without re-executing any business logic.
+The `idempotency_key` column on `orders` has a `UNIQUE` constraint as a DB-level safety net. The primary idempotency check happens in the controller layer via Redis (TTL 24h) — it short-circuits before business logic is invoked, returning the original response without re-executing any business logic.
 
 Any duplicate submission due to client retry, network timeout, or double-click is handled transparently.
 
