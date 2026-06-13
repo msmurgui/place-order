@@ -682,7 +682,7 @@ Sequential commits. Each item is roughly one logical unit of work.
 - [x] `WarehouseSelectionService` — eligible warehouse query + haversine sort
 - [x] `ReservationService` — per-product lock (check + insert within lock window), confirm, release
 - [x] `OrderService` (Facade) — orchestrates subtotal, warehouse selection, tax, reservation, payment, compensation, dead-letter queue
-- [ ] Middleware — `rateLimiter.ts` (per-customer sliding window), `circuitBreaker.ts` (Redis flag reader)
+- [x] Middleware — `rateLimiter.ts` (per-customer sliding window), `circuitBreaker.ts` (Redis flag reader)
 - [ ] Controller — `orderController.ts` with idempotency check + store
 - [ ] Route — `POST /orders` pipeline (rate limit → validate → controller)
 - [ ] Express app wiring — `app.ts`, `src/index.ts` server entry
