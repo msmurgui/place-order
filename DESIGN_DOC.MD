@@ -686,7 +686,7 @@ Sequential commits. Each item is roughly one logical unit of work.
 - [x] Controller — `orderController.ts` with idempotency check + store
 - [x] Route — `POST /orders` pipeline (rate limit → validate → controller)
 - [x] Express app wiring — `app.ts`, `src/main.ts` server entry
-- [ ] BullMQ job: `expireReservations` (every 1 min)
+- [x] BullMQ job: `expireReservations` (every 1 min)
 - [ ] BullMQ job: `reconcileOrders` (every 5 min)
 - [ ] Unit tests — `haversine`, `WarehouseSelectionService`, `DistributedLockService`, `ReservationService`, `TaxGateway`
 - [ ] Integration tests — all cases in the Tests section

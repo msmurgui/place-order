@@ -51,6 +51,28 @@ class _OrderRepository extends BaseRepository<Order> {
     return this.repo.findOneBy({ idempotencyKey: key });
   }
 
+  // Set-based: marks every still-pending order in the given reservation groups FAILED.
+  // Used by the expiry job after releasing reservations. Returns the number of orders failed.
+  async failPendingByGroupIds({
+    groupIds,
+    manager,
+  }: {
+    groupIds: string[];
+    manager?: EntityManager;
+  }): Promise<number> {
+    if (groupIds.length === 0) return 0;
+
+    const result = await this.getRepo(manager)
+      .createQueryBuilder()
+      .update()
+      .set({ status: 'FAILED' })
+      .where('status = :status', { status: 'PENDING_PAYMENT' })
+      .andWhere('reservation_group_id IN (:...groupIds)', { groupIds })
+      .execute();
+
+    return result.affected ?? 0;
+  }
+
   async findStalePending(): Promise<Order[]> {
     return this.repo
       .createQueryBuilder('order')

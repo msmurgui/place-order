@@ -26,12 +26,20 @@ class _ReservationRepository extends BaseRepository<InventoryReservation> {
     await this.getRepo(manager).update({ reservationGroupId, status: 'active' }, { status: 'released' });
   }
 
-  async findExpired(): Promise<InventoryReservation[]> {
-    return this.repo
-      .createQueryBuilder('r')
-      .where("r.status = 'active'")
-      .andWhere('r.expiresAt < NOW()')
-      .getMany();
+  // Set-based: releases every expired active reservation in one statement and returns the
+  // reservation_group_id of each released row (one entry per row, not deduped). The caller
+  // dedupes to decide which orders to fail. Far cheaper than per-row updates under load.
+  async releaseExpiredActive({ manager }: { manager?: EntityManager } = {}): Promise<string[]> {
+    const result = await this.getRepo(manager)
+      .createQueryBuilder()
+      .update()
+      .set({ status: 'released' })
+      .where('status = :status', { status: 'active' })
+      .andWhere('expires_at < NOW()')
+      .returning(['reservation_group_id'])
+      .execute();
+
+    return (result.raw as { reservation_group_id: string }[]).map((r) => r.reservation_group_id);
   }
 }
 
