@@ -1,3 +1,4 @@
+import { EntityManager } from 'typeorm';
 import { env } from '../../config/env';
 import { InventoryRepository } from '../../repositories/InventoryRepository';
 import { ReservationRepository } from '../../repositories/ReservationRepository';
@@ -62,13 +63,13 @@ class _ReservationService {
     }
   }
 
-  async confirmReservations(orderId: number): Promise<void> {
-    await ReservationRepository.confirmByOrderId(orderId);
+  async confirmReservations({ orderId, manager }: { orderId: number; manager?: EntityManager }): Promise<void> {
+    await ReservationRepository.confirmByOrderId({ orderId, manager });
     logger.info({ orderId }, 'reservations confirmed');
   }
 
-  async releaseReservations(orderId: number): Promise<void> {
-    await ReservationRepository.releaseByOrderId(orderId);
+  async releaseReservations({ orderId, manager }: { orderId: number; manager?: EntityManager }): Promise<void> {
+    await ReservationRepository.releaseByOrderId({ orderId, manager });
     logger.info({ orderId }, 'reservations released');
   }
 }

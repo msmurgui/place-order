@@ -1,3 +1,4 @@
+import { EntityManager } from 'typeorm';
 import { InventoryReservation } from '../entities/InventoryReservation';
 import { BaseRepository } from './BaseRepository';
 
@@ -17,12 +18,12 @@ class _ReservationRepository extends BaseRepository<InventoryReservation> {
     return this.repo.save(this.repo.create({ ...data, status: 'active' }));
   }
 
-  async confirmByOrderId(orderId: number): Promise<void> {
-    await this.repo.update({ orderId, status: 'active' }, { status: 'confirmed' });
+  async confirmByOrderId({ orderId, manager }: { orderId: number; manager?: EntityManager }): Promise<void> {
+    await this.getRepo(manager).update({ orderId, status: 'active' }, { status: 'confirmed' });
   }
 
-  async releaseByOrderId(orderId: number): Promise<void> {
-    await this.repo.update({ orderId, status: 'active' }, { status: 'released' });
+  async releaseByOrderId({ orderId, manager }: { orderId: number; manager?: EntityManager }): Promise<void> {
+    await this.getRepo(manager).update({ orderId, status: 'active' }, { status: 'released' });
   }
 
   async findExpired(): Promise<InventoryReservation[]> {

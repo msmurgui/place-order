@@ -1,3 +1,4 @@
+import { EntityManager } from 'typeorm';
 import { OrderItem } from '../entities/OrderItem';
 import { BaseRepository } from './BaseRepository';
 
@@ -19,8 +20,8 @@ class _OrderItemRepository extends BaseRepository<OrderItem> {
     super(OrderItem);
   }
 
-  async insertMany(items: InsertOrderItemData[]): Promise<void> {
-    await this.dataSource
+  async insertMany({ items, manager }: { items: InsertOrderItemData[]; manager?: EntityManager }): Promise<void> {
+    await this.getRepo(manager)
       .createQueryBuilder()
       .insert()
       .into(OrderItem)

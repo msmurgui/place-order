@@ -1,3 +1,4 @@
+import { EntityManager } from 'typeorm';
 import { Order, OrderStatus, ReceiptSnapshot } from '../entities/Order';
 import { BaseRepository } from './BaseRepository';
 
@@ -20,24 +21,27 @@ class _OrderRepository extends BaseRepository<Order> {
     super(Order);
   }
 
-  async insert(data: InsertOrderData): Promise<Order> {
-    return this.repo.save(this.repo.create(data));
+  async insert({ data, manager }: { data: InsertOrderData; manager?: EntityManager }): Promise<Order> {
+    const repo = this.getRepo(manager);
+    return repo.save(repo.create(data));
   }
 
   async updateStatus({
     orderId,
     status,
     paymentReference,
+    manager,
   }: {
     orderId: number;
     status: OrderStatus;
     paymentReference?: string;
+    manager?: EntityManager;
   }): Promise<void> {
     const update: Partial<Order> = { status };
     if (paymentReference !== undefined) {
       update.paymentReference = paymentReference;
     }
-    await this.repo.update(orderId, update);
+    await this.getRepo(manager).update(orderId, update);
   }
 
   async findByIdempotencyKey(key: string): Promise<Order | null> {

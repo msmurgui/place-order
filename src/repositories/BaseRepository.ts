@@ -1,4 +1,4 @@
-import { EntityTarget, ObjectLiteral, Repository } from 'typeorm';
+import { EntityManager, EntityTarget, ObjectLiteral, Repository } from 'typeorm';
 import { AppDataSource } from '../db/dataSource';
 
 export abstract class BaseRepository<T extends ObjectLiteral> {
@@ -10,5 +10,9 @@ export abstract class BaseRepository<T extends ObjectLiteral> {
 
   protected get dataSource() {
     return AppDataSource;
+  }
+
+  protected getRepo(manager?: EntityManager): Repository<T> {
+    return manager ? manager.getRepository(this.target) : this.repo;
   }
 }

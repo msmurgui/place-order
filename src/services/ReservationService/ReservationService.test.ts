@@ -130,14 +130,14 @@ describe('createReservations', () => {
 
 describe('confirmReservations', () => {
   it('delegates to ReservationRepository', async () => {
-    await ReservationService.confirmReservations(orderId);
-    expect(ReservationRepository.confirmByOrderId).toHaveBeenCalledWith(orderId);
+    await ReservationService.confirmReservations({ orderId });
+    expect(ReservationRepository.confirmByOrderId).toHaveBeenCalledWith({ orderId, manager: undefined });
   });
 });
 
 describe('releaseReservations', () => {
   it('delegates to ReservationRepository', async () => {
-    await ReservationService.releaseReservations(orderId);
-    expect(ReservationRepository.releaseByOrderId).toHaveBeenCalledWith(orderId);
+    await ReservationService.releaseReservations({ orderId });
+    expect(ReservationRepository.releaseByOrderId).toHaveBeenCalledWith({ orderId, manager: undefined });
   });
 });
