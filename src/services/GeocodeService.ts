@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { redisClient } from '../redis';
 import { GeocodingGateway, type Coordinates } from '../gateways/GeocodingGateway';
-import { CircuitOpenError } from '../util/errors';
+import { assertCircuitClosed } from '../middleware/circuitBreaker';
 import { logger } from '../util/logger';
 
 const CACHE_TTL_SECONDS = 2_592_000; // 30 days
@@ -24,10 +24,7 @@ class _GeocodeService {
       return JSON.parse(cached) as Coordinates;
     }
 
-    const circuitOpen = await redisClient.get('circuit:geocoding');
-    if (circuitOpen === '1') {
-      throw new CircuitOpenError('geocoding');
-    }
+    await assertCircuitClosed('geocoding');
 
     logger.info({ address }, 'geocode cache miss — calling gateway');
     const coords = await GeocodingGateway.geocode(address);

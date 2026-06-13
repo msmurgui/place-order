@@ -1,6 +1,5 @@
 import { TaxGateway } from '../../../gateways/TaxGateway';
-import { redisClient } from '../../../redis';
-import { CircuitOpenError } from '../../../util/errors';
+import { assertCircuitClosed } from '../../../middleware/circuitBreaker';
 import { round2 } from '../../../util/numbers';
 import { PreTaxLineItem } from './buildPreTaxLineItems';
 
@@ -18,8 +17,7 @@ export const buildTaxedLineItems = async ({
   lineItems: PreTaxLineItem[];
   subtotal: number;
 }): Promise<{ taxedLineItems: TaxedLineItem[]; total: number; totalTaxAmount: number }> => {
-  const taxCircuitOpen = await redisClient.get('circuit:tax');
-  if (taxCircuitOpen === '1') throw new CircuitOpenError('tax');
+  await assertCircuitClosed('tax');
 
   const taxResult = await TaxGateway.calculate({
     shippingAddress,

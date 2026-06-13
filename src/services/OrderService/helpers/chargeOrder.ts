@@ -1,6 +1,5 @@
 import { PaymentGateway } from '../../../gateways/PaymentGateway';
-import { redisClient } from '../../../redis';
-import { CircuitOpenError } from '../../../util/errors';
+import { assertCircuitClosed } from '../../../middleware/circuitBreaker';
 import { withRetry } from '../../../util/retry';
 
 export const chargeOrder = async ({
@@ -14,8 +13,7 @@ export const chargeOrder = async ({
   total: number;
   cardNumber: string;
 }) => {
-  const paymentCircuitOpen = await redisClient.get('circuit:payment');
-  if (paymentCircuitOpen === '1') throw new CircuitOpenError('payment');
+  await assertCircuitClosed('payment');
 
   const { reference } = await withRetry({
     fn: () => PaymentGateway.charge({ total, cardNumber, orderId, orderItemIds }),
