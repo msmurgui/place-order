@@ -1,16 +1,13 @@
 import type { Request, Response } from 'express';
 import { IdempotencyRepository } from '../repositories/IdempotencyRepository';
-import { OrderService, type OrderToPlace } from '../services/OrderService/OrderService';
+import { OrderService } from '../services/OrderService/OrderService';
+import type { PlaceOrderRequestBody } from './placeOrderSchema';
 
 const IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60; // 24h
 
 interface CachedResponse {
   statusCode: number;
   body: Record<string, unknown>;
-}
-
-interface PlaceOrderRequestBody {
-  orderToPlace: OrderToPlace;
 }
 
 export const placeOrderController = async (

@@ -684,7 +684,7 @@ Sequential commits. Each item is roughly one logical unit of work.
 - [x] `OrderService` (Facade) — orchestrates subtotal, warehouse selection, tax, reservation, payment, compensation, dead-letter queue
 - [x] Middleware — `rateLimiter.ts` (per-customer sliding window), `circuitBreaker.ts` (Redis flag reader)
 - [x] Controller — `orderController.ts` with idempotency check + store
-- [ ] Route — `POST /orders` pipeline (rate limit → validate → controller)
+- [x] Route — `POST /orders` pipeline (rate limit → validate → controller)
 - [ ] Express app wiring — `app.ts`, `src/index.ts` server entry
 - [ ] BullMQ job: `expireReservations` (every 1 min)
 - [ ] BullMQ job: `reconcileOrders` (every 5 min)

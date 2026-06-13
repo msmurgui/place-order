@@ -23,17 +23,21 @@ const SLIDING_WINDOW_SCRIPT = `
   return 1
 `;
 
-export const rateLimiter = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-  const customerId = (req.body as { customerId?: unknown })?.customerId;
+// Per-client sliding-window limiter keyed on the request IP.
+export const rateLimiter = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  const clientIp = req.ip;
 
-  // The limit keys on customerId. If it's missing or malformed, skip — schema validation
-  // runs next in the pipeline and will reject the request.
-  if (typeof customerId !== 'number') {
+  // No identifiable client — fail open rather than block.
+  if (!clientIp) {
     next();
     return;
   }
 
-  const key = `ratelimit:${customerId}`;
+  const key = `ratelimit:${clientIp}`;
   const now = Date.now();
 
   try {
@@ -55,7 +59,7 @@ export const rateLimiter = async (req: Request, res: Response, next: NextFunctio
     next();
   } catch (err) {
     // Fail open — a Redis hiccup should not take down the endpoint. Log and allow through.
-    logger.warn({ err, customerId }, 'rate limiter unavailable — allowing request');
+    logger.warn({ err, clientIp }, 'rate limiter unavailable — allowing request');
     next();
   }
 };
