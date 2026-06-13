@@ -20,13 +20,15 @@ class _OrderItemRepository extends BaseRepository<OrderItem> {
     super(OrderItem);
   }
 
-  async insertMany({ items, manager }: { items: InsertOrderItemData[]; manager?: EntityManager }): Promise<void> {
-    await this.getRepo(manager)
+  async insertMany({ items, manager }: { items: InsertOrderItemData[]; manager?: EntityManager }): Promise<OrderItem[]> {
+    const result = await this.getRepo(manager)
       .createQueryBuilder()
       .insert()
       .into(OrderItem)
       .values(items)
       .execute();
+
+    return result.generatedMaps as OrderItem[];
   }
 }
 

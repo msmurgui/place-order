@@ -37,12 +37,14 @@ class _OrderRepository extends BaseRepository<Order> {
     status: OrderStatus;
     paymentReference?: string;
     manager?: EntityManager;
-  }): Promise<void> {
+  }): Promise<Order> {
+    const repo = this.getRepo(manager);
     const update: Partial<Order> = { status };
     if (paymentReference !== undefined) {
       update.paymentReference = paymentReference;
     }
-    await this.getRepo(manager).update(orderId, update);
+    await repo.update(orderId, update);
+    return repo.findOneByOrFail({ id: orderId });
   }
 
   async findByIdempotencyKey(key: string): Promise<Order | null> {

@@ -16,18 +16,18 @@ interface ReservationItem {
 class _ReservationService {
   async createReservations({
     warehouseId,
-    reservationItem,
+    reservationItems,
     reservationGroupId,
   }: {
     warehouseId: number;
-    reservationItem: ReservationItem[];
+    reservationItems: ReservationItem[];
     reservationGroupId: string;
   }): Promise<void> {
     const expiresAt = new Date(Date.now() + env.RESERVATION_EXPIRY_MINUTES * 60 * 1_000);
 
     // Ascending productId order prevents deadlocks when two concurrent orders
     // touch the same products in opposite order.
-    const sortedReservationItems = [...reservationItem].sort((a, b) => a.productId - b.productId);
+    const sortedReservationItems = [...reservationItems].sort((a, b) => a.productId - b.productId);
 
     for (const reservationItem of sortedReservationItems) {
       const lockKey = `inv-lock:${warehouseId}:${reservationItem.productId}`;

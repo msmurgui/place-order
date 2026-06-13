@@ -34,7 +34,7 @@ describe('createReservations', () => {
   it('acquires lock, checks availability, and inserts reservation', async () => {
     await ReservationService.createReservations({
       warehouseId,
-      reservationItem: [{ productId: 1, quantity: 2 }],
+      reservationItems: [{ productId: 1, quantity: 2 }],
       reservationGroupId,
     });
 
@@ -49,7 +49,7 @@ describe('createReservations', () => {
   it('acquires locks in ascending productId order to prevent deadlocks', async () => {
     await ReservationService.createReservations({
       warehouseId,
-      reservationItem: [
+      reservationItems: [
         { productId: 3, quantity: 1 },
         { productId: 1, quantity: 1 },
       ],
@@ -67,7 +67,7 @@ describe('createReservations', () => {
     await expect(
       ReservationService.createReservations({
         warehouseId,
-        reservationItem: [{ productId: 1, quantity: 5 }],
+        reservationItems: [{ productId: 1, quantity: 5 }],
         reservationGroupId,
       })
     ).rejects.toThrow(InsufficientInventoryError);
@@ -79,7 +79,7 @@ describe('createReservations', () => {
     await expect(
       ReservationService.createReservations({
         warehouseId,
-        reservationItem: [{ productId: 1, quantity: 1 }],
+        reservationItems: [{ productId: 1, quantity: 1 }],
         reservationGroupId,
       })
     ).rejects.toThrow(InsufficientInventoryError);
@@ -91,7 +91,7 @@ describe('createReservations', () => {
     await expect(
       ReservationService.createReservations({
         warehouseId,
-        reservationItem: [{ productId: 1, quantity: 1 }],
+        reservationItems: [{ productId: 1, quantity: 1 }],
         reservationGroupId,
       })
     ).rejects.toThrow('Failed to acquire inventory lock');
@@ -105,7 +105,7 @@ describe('createReservations', () => {
     await expect(
       ReservationService.createReservations({
         warehouseId,
-        reservationItem: [{ productId: 1, quantity: 1 }],
+        reservationItems: [{ productId: 1, quantity: 1 }],
         reservationGroupId,
       })
     ).rejects.toThrow('DB error');
@@ -119,7 +119,7 @@ describe('createReservations', () => {
     await expect(
       ReservationService.createReservations({
         warehouseId,
-        reservationItem: [{ productId: 1, quantity: 1 }],
+        reservationItems: [{ productId: 1, quantity: 1 }],
         reservationGroupId,
       })
     ).rejects.toThrow('DB error');

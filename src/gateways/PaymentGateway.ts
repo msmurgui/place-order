@@ -14,21 +14,25 @@ class _PaymentGateway {
   async charge({
     total,
     cardNumber,
+    orderId,
+    orderItemIds,
   }: {
     total: number;
     cardNumber: string;
+    orderId: number;
+    orderItemIds: number[];
   }): Promise<{ reference: string }> {
     if (cardNumber === DECLINED_CARD) {
       throw new PaymentDeclinedError('card declined by issuer');
     }
 
     void total; // real implementation would pass this to the payment processor
+    void orderId; // real implementation would pass this to the payment processor as metadata
+    void orderItemIds; // real implementation would pass this to the payment processor as metadata
     return { reference: randomUUID() };
   }
 
-  async getStatus(
-    _reference: string,
-  ): Promise<'succeeded' | 'failed' | 'unknown'> {
+  async getStatus(_reference: string): Promise<'succeeded' | 'failed' | 'unknown'> {
     return 'succeeded';
   }
 }
