@@ -11,6 +11,8 @@ const schema = z.object({
   DB_PASSWORD: z.string().min(1),
   REDIS_URL: z.string().min(1),
   RESERVATION_EXPIRY_MINUTES: z.coerce.number().default(10),
+  RATE_LIMIT_MAX: z.coerce.number().default(5),
+  RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().default(60),
 });
 
 const parsed = schema.safeParse(process.env);
