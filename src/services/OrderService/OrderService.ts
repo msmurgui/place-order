@@ -11,6 +11,7 @@ import { persistOrder } from './helpers/persistOrder';
 import { chargeOrder } from './helpers/chargeOrder';
 import { confirmOrderAndReservations } from './helpers/confirmOrderAndReservations';
 import { releaseOrderAndReservations } from './helpers/releaseOrderAndReservations';
+import { deadLetterQueue } from '../../jobs/deadLetterQueue';
 
 interface OrderInput {
   customerId: number;
@@ -121,7 +122,14 @@ class _OrderService {
         // If release fails, stock is in an inconsistent
         // state — enqueue for manual investigation.
 
-        // TODO: add dead letter queue here!
+        await deadLetterQueue.add('release-failed', {
+          reservationGroupId,
+          orderId: failedOrder?.id ?? null,
+          failureStage: 'reservation_release',
+          paymentReference,
+          error: JSON.stringify(error),
+          releaseError: JSON.stringify(releaseError),
+        });
 
         logger.error(
           { reservationGroupId, orderId: failedOrder?.id, paymentReference, error, releaseError },
