@@ -145,24 +145,26 @@ Eight tables. Migrations run in dependency order via `typeorm migration:run`. Mi
 
 | Table | Key columns |
 |---|---|
-| `orders` | `id serial PK`, `customer_id FK`, `warehouse_id FK`, `warehouse_name text`, `warehouse_address text`, `shipping_address jsonb`, `subtotal numeric(10,2)`, `tax_amount numeric(10,2)`, `total numeric(10,2)`, `status text CHECK('PENDING_PAYMENT','CONFIRMED','FAILED')`, `payment_reference text`, `idempotency_key text unique`, `receipt_snapshot jsonb`, `created_at timestamptz` |
+| `orders` | `id serial PK`, `customer_id FK`, `warehouse_id FK`, `warehouse_name text`, `warehouse_address text`, `shipping_address jsonb`, `subtotal numeric(10,2)`, `tax_amount numeric(10,2)`, `total numeric(10,2)`, `status text CHECK('PENDING_PAYMENT','CONFIRMED','FAILED')`, `payment_reference text`, `idempotency_key text unique`, `reservation_group_id uuid unique`, `receipt_snapshot jsonb`, `created_at timestamptz` |
 | `order_items` | `id serial PK`, `order_id FK`, `product_id FK`, `quantity int`, `unit_price numeric(10,2)`, `product_name text`, `product_sku text`, `product_description text`, `tax_code text`, `tax_rate numeric(5,4)`, `tax_amount numeric(10,2)` |
 
 ### Reservation table
 
 | Table | Key columns |
 |---|---|
-| `inventory_reservations` | `id serial PK`, `warehouse_id FK`, `product_id FK`, `order_id FK`, `quantity int`, `status text CHECK('active','confirmed','released')`, `expires_at timestamptz`, `created_at timestamptz` |
+| `inventory_reservations` | `id serial PK`, `inventory_id FK`, `reservation_group_id uuid`, `quantity int`, `status text CHECK('active','confirmed','released')`, `expires_at timestamptz`, `created_at timestamptz` |
+
+Reservations are grouped by `reservation_group_id`, a server-generated UUID, **not** by `order_id`. The key is generated at the start of the request — before the order row exists — so inventory can be reserved before the order (and before the tax call). The order carries the same `reservation_group_id` for the reverse lookup. This decouples reservation from order creation: a reservation is an inherently pre-order transient, and one whose order is never created is simply released by the expiry job. See [Inventory Management System](#inventory-management-system) for why reserving early matters.
 
 **Critical index on `inventory_reservations`:**
 
 ```sql
 CREATE INDEX idx_inventory_reservations_availability
-ON inventory_reservations (warehouse_id, product_id, status, expires_at)
-WHERE status = 'active';
+ON inventory_reservations (inventory_id, status, expires_at)
+WHERE status IN ('active', 'confirmed');
 ```
 
-This index is load-bearing. The availability query runs on every warehouse selection check and aggregates across all active reservations per product. Without it, the query degrades linearly as the table grows. The partial `WHERE status = 'active'` clause keeps the index small — confirmed and released rows are excluded automatically.
+This index is load-bearing. The availability query runs on every warehouse selection check and aggregates across all reservations that still hold stock per product. Without it, the query degrades linearly as the table grows. The partial `WHERE status IN ('active', 'confirmed')` clause keeps the index small — only `released` rows are excluded, since they no longer count against availability.
 
 Seeds provide 1 customer, 3 products with different tax codes, 2 warehouses with varying inventory for test coverage.
 
@@ -266,32 +268,38 @@ SELECT
   i.quantity - COALESCE(SUM(r.quantity), 0) AS available
 FROM inventories i
 LEFT JOIN inventory_reservations r
-  ON  r.warehouse_id = i.warehouse_id
-  AND r.product_id   = i.product_id
-  AND r.status       = 'active'
-  AND r.expires_at   > NOW()
+  ON  r.inventory_id = i.id
+  AND (
+    (r.status = 'active' AND r.expires_at > NOW())
+    OR r.status = 'confirmed'
+  )
 WHERE i.warehouse_id = :warehouseId
   AND i.product_id   = :productId
-GROUP BY i.quantity
+GROUP BY i.id, i.quantity
 ```
 
-`inventories.quantity` represents **physical stock** and is only written during receiving/restocking operations — never on the order path.
+Both **`active`** and **`confirmed`** reservations subtract from available stock. This is essential: an order is never decremented from `inventories.quantity` on the order path. When payment succeeds and a reservation flips `active → confirmed`, it must keep counting against availability — otherwise the confirmed stock would reappear as available the moment an order is paid, causing oversell. The `expires_at > NOW()` filter applies only to `active` reservations; `confirmed` reservations never expire and count until the goods physically ship.
+
+`inventories.quantity` represents **physical stock** and is only written during receiving/restocking and physical fulfillment/shipment operations — never on the order path. A `confirmed` reservation continues to hold stock against availability until that out-of-band shipment process decrements `quantity` and clears the reservation.
 
 ### Reservation lifecycle
 
 ```
-INSERT reservation (status='active', expires_at=NOW()+10min)
+reservationGroupId = randomUUID()   ← before any order row exists
        ↓
- Payment attempted
+INSERT reservation (reservation_group_id, status='active', expires_at=NOW()+10min)
+       ↓
+ Order inserted (carries reservation_group_id), then payment attempted
        ↓
   ┌────┴────┐
 success   failure
   ↓           ↓
 status=    status=
 confirmed  released
+(by reservation_group_id)
 ```
 
-Reservations that reach `expires_at` while still `active` are released by the `expireReservations` background job.
+Reservations that reach `expires_at` while still `active` are released by the `expireReservations` background job. `confirmed` reservations are terminal on the order path — they do not expire and continue to subtract from available stock until the out-of-band fulfillment/shipment process decrements physical `inventories.quantity` and clears them.
 
 ### Lock scope and timing
 
@@ -383,18 +391,22 @@ The controller never calls repositories other than `IdempotencyRepository`. All 
 ```
 1. Fetch products via ProductRepository; compute subtotal server-side
 2. WarehouseSelectionService.findClosest(items, shippingAddress)
-3. TaxGateway.calculate(shippingAddress, items with tax codes)
-4. Compute total = subtotal + taxAmount
-5. ReservationService.createReservations(warehouseId, items, orderId)
-6. OrderRepository.insert(order) + OrderItemRepository.insertMany(items) with full snapshots
-7. Check payment circuit breaker → throw CircuitOpenError (503) if open
-8. withRetry(() => PaymentGateway.charge(total, ...), 2, 500ms)
-9. On success: ReservationService.confirmReservations(orderId)
-               OrderRepository.updateStatus(orderId, 'CONFIRMED')
-10. On failure: ReservationService.releaseReservations(orderId)  ← compensating transaction
-                OrderRepository.updateStatus(orderId, 'FAILED')
+3. reservationGroupId = randomUUID()
+4. ReservationService.createReservations(warehouseId, items, reservationGroupId)  ← reserve EARLY
+   ── from here, any failure releases by reservationGroupId (compensating transaction) ──
+5. Check tax circuit breaker → throw CircuitOpenError (503) if open
+6. TaxGateway.calculate(shippingAddress, items with tax codes); total = subtotal + taxAmount
+7. OrderRepository.insert(order with reservationGroupId) + OrderItemRepository.insertMany(items) with full snapshots
+8. Check payment circuit breaker → throw CircuitOpenError (503) if open
+9. withRetry(() => PaymentGateway.charge(total, ...), 2, 500ms)
+10. On success: ReservationService.confirmReservations(reservationGroupId)
+                OrderRepository.updateStatus(orderId, 'CONFIRMED')
+11. On failure: ReservationService.releaseReservations(reservationGroupId)  ← compensating transaction
+                OrderRepository.updateStatus(orderId, 'FAILED')  ← only if the order was created
                 if release fails → deadLetterQueue.send(...)
 ```
+
+Inventory is reserved at step 4 — before the tax gateway call and before any order write. Reservations key on `reservationGroupId` rather than `orderId`, so they no longer depend on an existing order row. Failing fast here avoids a wasted tax call and order insert when stock is unavailable, and means a failed reservation never leaves an orphaned `PENDING_PAYMENT` order. The order in step 7 is created only once inventory is secured, and the compensating release on step 11 keys by `reservationGroupId` — marking the order `FAILED` only if it had already been inserted.
 
 **`ReservationService.createReservations`** — for each `(warehouseId, productId)` pair, in ascending key order:
 
@@ -402,11 +414,11 @@ The controller never calls repositories other than `IdempotencyRepository`. All 
 1. Acquire distributed lock: inv-lock:${warehouseId}:${productId}
 2. Query available inventory             ← inside lock
 3. Throw InsufficientInventoryError if quantity < requested  ← inside lock
-4. Insert reservation row (status='active', expires_at=NOW()+10min)  ← inside lock
+4. Insert reservation row (reservation_group_id, status='active', expires_at=NOW()+10min)  ← inside lock
 5. Release lock
 ```
 
-The lock is held across steps 2–4. This is what prevents two concurrent requests from both observing sufficient inventory before either inserts.
+The lock is held across steps 2–4. This is what prevents two concurrent requests from both observing sufficient inventory before either inserts. Each insert is autocommitted within the lock window — **never wrapped in a longer transaction** — so a concurrent request's availability query sees the committed row immediately. The reservation row carries `reservation_group_id` (passed in by `OrderService`), not an `order_id`.
 
 **`GeocodeService`** — cache wrapper with circuit breaker scoped to the gateway call:
 
@@ -440,7 +452,7 @@ All TypeORM queries are isolated here. Services call repositories; repositories 
 | `ProductRepository` | findByIds (price, name, sku, tax_code lookup at order time) |
 | `WarehouseRepository` | findAll with coordinates |
 | `InventoryRepository` | available inventory query (physical − active reservations) |
-| `ReservationRepository` | insert, confirmByOrderId, releaseByOrderId, findExpired |
+| `ReservationRepository` | insert (by reservation_group_id), confirmByGroupId, releaseByGroupId, findExpired |
 | `IdempotencyRepository` | Redis GET / SET EX (no TypeORM — Redis-backed) |
 
 ---
@@ -547,9 +559,10 @@ Accessing `.paymentReference` on a `PENDING_PAYMENT` order is a compile-time err
 ```
 1. ReservationRepository.findExpired()
    → SELECT WHERE status='active' AND expires_at < NOW()
-2. For each: ReservationRepository.releaseByOrderId(orderId)
-3. If associated order is still PENDING_PAYMENT:
+2. For each: ReservationRepository.releaseByGroupId(reservationGroupId)
+3. If an order exists for that reservation_group_id and is still PENDING_PAYMENT:
    OrderRepository.updateStatus(orderId, 'FAILED')
+   (a reservation whose order was never created simply releases — nothing to fail)
 4. Emit metric: inventory_reservations_expired_total++
 ```
 

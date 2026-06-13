@@ -17,11 +17,11 @@ class _ReservationService {
   async createReservations({
     warehouseId,
     reservationItem,
-    orderId,
+    reservationGroupId,
   }: {
     warehouseId: number;
     reservationItem: ReservationItem[];
-    orderId: number;
+    reservationGroupId: string;
   }): Promise<void> {
     const expiresAt = new Date(Date.now() + env.RESERVATION_EXPIRY_MINUTES * 60 * 1_000);
 
@@ -50,12 +50,12 @@ class _ReservationService {
 
         await ReservationRepository.insert({
           inventoryId: availableInventory.inventoryId,
-          orderId,
+          reservationGroupId,
           quantity: reservationItem.quantity,
           expiresAt,
         });
 
-        logger.info({ warehouseId, productId: reservationItem.productId, orderId }, 'reservation created');
+        logger.info({ warehouseId, productId: reservationItem.productId, reservationGroupId }, 'reservation created');
       } finally {
         // Guaranteed release — even if the availableInventory check or insert throws.
         await DistributedLockService.release({ key: lockKey, token });
@@ -63,14 +63,14 @@ class _ReservationService {
     }
   }
 
-  async confirmReservations({ orderId, manager }: { orderId: number; manager?: EntityManager }): Promise<void> {
-    await ReservationRepository.confirmByOrderId({ orderId, manager });
-    logger.info({ orderId }, 'reservations confirmed');
+  async confirmReservations({ reservationGroupId, manager }: { reservationGroupId: string; manager?: EntityManager }): Promise<void> {
+    await ReservationRepository.confirmByGroupId({ reservationGroupId, manager });
+    logger.info({ reservationGroupId }, 'reservations confirmed');
   }
 
-  async releaseReservations({ orderId, manager }: { orderId: number; manager?: EntityManager }): Promise<void> {
-    await ReservationRepository.releaseByOrderId({ orderId, manager });
-    logger.info({ orderId }, 'reservations released');
+  async releaseReservations({ reservationGroupId, manager }: { reservationGroupId: string; manager?: EntityManager }): Promise<void> {
+    await ReservationRepository.releaseByGroupId({ reservationGroupId, manager });
+    logger.info({ reservationGroupId }, 'reservations released');
   }
 }
 

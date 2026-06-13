@@ -24,8 +24,10 @@ class _InventoryRepository extends BaseRepository<Inventory> {
        FROM inventories i
        LEFT JOIN inventory_reservations r
          ON  r.inventory_id = i.id
-         AND r.status       = 'active'
-         AND r.expires_at   > NOW()
+         AND (
+           (r.status = 'active' AND r.expires_at > NOW())
+           OR r.status = 'confirmed'
+         )
        WHERE i.warehouse_id = $1
          AND i.product_id   = $2
        GROUP BY i.id, i.quantity`,

@@ -13,6 +13,7 @@ export interface InsertOrderData {
   total: number;
   status: OrderStatus;
   idempotencyKey: string;
+  reservationGroupId: string;
   receiptSnapshot: ReceiptSnapshot;
 }
 

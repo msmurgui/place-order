@@ -1,5 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
-import { Order } from './Order';
+import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
 
 export type ReservationStatus = 'active' | 'confirmed' | 'released';
 
@@ -11,8 +10,8 @@ export class InventoryReservation {
   @Column({ name: 'inventory_id' })
   inventoryId!: number;
 
-  @Column({ name: 'order_id' })
-  orderId!: number;
+  @Column({ type: 'uuid', name: 'reservation_group_id' })
+  reservationGroupId!: string;
 
   @Column({ type: 'int' })
   quantity!: number;
@@ -25,8 +24,4 @@ export class InventoryReservation {
 
   @Column({ type: 'timestamptz', name: 'created_at', default: () => 'NOW()' })
   createdAt!: Date;
-
-  @ManyToOne(() => Order, (order) => order.reservations)
-  @JoinColumn({ name: 'order_id' })
-  order!: Order;
 }

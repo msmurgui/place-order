@@ -2,7 +2,6 @@ import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, OneToMany, JoinColum
 import { Customer } from './Customer';
 import { Warehouse } from './Warehouse';
 import { OrderItem } from './OrderItem';
-import { InventoryReservation } from './InventoryReservation';
 import { numericTransformer } from './util/transformers';
 
 export type OrderStatus = 'PENDING_PAYMENT' | 'CONFIRMED' | 'FAILED';
@@ -66,6 +65,9 @@ export class Order {
   @Column({ type: 'text', name: 'idempotency_key', unique: true })
   idempotencyKey!: string;
 
+  @Column({ type: 'uuid', name: 'reservation_group_id', unique: true })
+  reservationGroupId!: string;
+
   @Column({ type: 'jsonb', name: 'receipt_snapshot' })
   receiptSnapshot!: ReceiptSnapshot;
 
@@ -82,7 +84,4 @@ export class Order {
 
   @OneToMany(() => OrderItem, (item) => item.order)
   items!: OrderItem[];
-
-  @OneToMany(() => InventoryReservation, (reservation) => reservation.order)
-  reservations!: InventoryReservation[];
 }

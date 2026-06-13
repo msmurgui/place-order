@@ -4,7 +4,7 @@ import { BaseRepository } from './BaseRepository';
 
 interface InsertReservationData {
   inventoryId: number;
-  orderId: number;
+  reservationGroupId: string;
   quantity: number;
   expiresAt: Date;
 }
@@ -18,12 +18,12 @@ class _ReservationRepository extends BaseRepository<InventoryReservation> {
     return this.repo.save(this.repo.create({ ...data, status: 'active' }));
   }
 
-  async confirmByOrderId({ orderId, manager }: { orderId: number; manager?: EntityManager }): Promise<void> {
-    await this.getRepo(manager).update({ orderId, status: 'active' }, { status: 'confirmed' });
+  async confirmByGroupId({ reservationGroupId, manager }: { reservationGroupId: string; manager?: EntityManager }): Promise<void> {
+    await this.getRepo(manager).update({ reservationGroupId, status: 'active' }, { status: 'confirmed' });
   }
 
-  async releaseByOrderId({ orderId, manager }: { orderId: number; manager?: EntityManager }): Promise<void> {
-    await this.getRepo(manager).update({ orderId, status: 'active' }, { status: 'released' });
+  async releaseByGroupId({ reservationGroupId, manager }: { reservationGroupId: string; manager?: EntityManager }): Promise<void> {
+    await this.getRepo(manager).update({ reservationGroupId, status: 'active' }, { status: 'released' });
   }
 
   async findExpired(): Promise<InventoryReservation[]> {

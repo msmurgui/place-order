@@ -5,7 +5,7 @@ vi.mock('../../config/env', () => ({ env: { RESERVATION_EXPIRY_MINUTES: 10 } }))
 vi.mock('../../util/logger', () => ({ logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 vi.mock('../../repositories/InventoryRepository', () => ({ InventoryRepository: { getAvailable: vi.fn() } }));
 vi.mock('../../repositories/ReservationRepository', () => ({
-  ReservationRepository: { insert: vi.fn(), confirmByOrderId: vi.fn(), releaseByOrderId: vi.fn() },
+  ReservationRepository: { insert: vi.fn(), confirmByGroupId: vi.fn(), releaseByGroupId: vi.fn() },
 }));
 vi.mock('../DistributedLockService', () => ({ DistributedLockService: { acquire: vi.fn(), release: vi.fn() } }));
 
@@ -15,15 +15,15 @@ import { DistributedLockService } from '../DistributedLockService';
 import { ReservationService } from './ReservationService';
 
 const warehouseId = 1;
-const orderId = 42;
+const reservationGroupId = 'group-abc';
 
 beforeEach(() => {
   vi.mocked(DistributedLockService.acquire).mockResolvedValue('lock-token');
   vi.mocked(DistributedLockService.release).mockResolvedValue(undefined);
   vi.mocked(InventoryRepository.getAvailable).mockResolvedValue({ inventoryId: 10, available: 5 });
   vi.mocked(ReservationRepository.insert).mockResolvedValue(undefined as never);
-  vi.mocked(ReservationRepository.confirmByOrderId).mockResolvedValue(undefined);
-  vi.mocked(ReservationRepository.releaseByOrderId).mockResolvedValue(undefined);
+  vi.mocked(ReservationRepository.confirmByGroupId).mockResolvedValue(undefined);
+  vi.mocked(ReservationRepository.releaseByGroupId).mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -35,13 +35,13 @@ describe('createReservations', () => {
     await ReservationService.createReservations({
       warehouseId,
       reservationItem: [{ productId: 1, quantity: 2 }],
-      orderId,
+      reservationGroupId,
     });
 
     expect(DistributedLockService.acquire).toHaveBeenCalledWith({ key: 'inv-lock:1:1', ttlMs: 5_000 });
     expect(InventoryRepository.getAvailable).toHaveBeenCalledWith({ warehouseId, productId: 1 });
     expect(ReservationRepository.insert).toHaveBeenCalledWith(
-      expect.objectContaining({ inventoryId: 10, orderId, quantity: 2 })
+      expect.objectContaining({ inventoryId: 10, reservationGroupId, quantity: 2 })
     );
     expect(DistributedLockService.release).toHaveBeenCalledWith({ key: 'inv-lock:1:1', token: 'lock-token' });
   });
@@ -53,7 +53,7 @@ describe('createReservations', () => {
         { productId: 3, quantity: 1 },
         { productId: 1, quantity: 1 },
       ],
-      orderId,
+      reservationGroupId,
     });
 
     const acquireCalls = vi.mocked(DistributedLockService.acquire).mock.calls;
@@ -68,7 +68,7 @@ describe('createReservations', () => {
       ReservationService.createReservations({
         warehouseId,
         reservationItem: [{ productId: 1, quantity: 5 }],
-        orderId,
+        reservationGroupId,
       })
     ).rejects.toThrow(InsufficientInventoryError);
   });
@@ -80,7 +80,7 @@ describe('createReservations', () => {
       ReservationService.createReservations({
         warehouseId,
         reservationItem: [{ productId: 1, quantity: 1 }],
-        orderId,
+        reservationGroupId,
       })
     ).rejects.toThrow(InsufficientInventoryError);
   });
@@ -92,7 +92,7 @@ describe('createReservations', () => {
       ReservationService.createReservations({
         warehouseId,
         reservationItem: [{ productId: 1, quantity: 1 }],
-        orderId,
+        reservationGroupId,
       })
     ).rejects.toThrow('Failed to acquire inventory lock');
 
@@ -106,7 +106,7 @@ describe('createReservations', () => {
       ReservationService.createReservations({
         warehouseId,
         reservationItem: [{ productId: 1, quantity: 1 }],
-        orderId,
+        reservationGroupId,
       })
     ).rejects.toThrow('DB error');
 
@@ -120,7 +120,7 @@ describe('createReservations', () => {
       ReservationService.createReservations({
         warehouseId,
         reservationItem: [{ productId: 1, quantity: 1 }],
-        orderId,
+        reservationGroupId,
       })
     ).rejects.toThrow('DB error');
 
@@ -130,14 +130,14 @@ describe('createReservations', () => {
 
 describe('confirmReservations', () => {
   it('delegates to ReservationRepository', async () => {
-    await ReservationService.confirmReservations({ orderId });
-    expect(ReservationRepository.confirmByOrderId).toHaveBeenCalledWith({ orderId, manager: undefined });
+    await ReservationService.confirmReservations({ reservationGroupId });
+    expect(ReservationRepository.confirmByGroupId).toHaveBeenCalledWith({ reservationGroupId, manager: undefined });
   });
 });
 
 describe('releaseReservations', () => {
   it('delegates to ReservationRepository', async () => {
-    await ReservationService.releaseReservations({ orderId });
-    expect(ReservationRepository.releaseByOrderId).toHaveBeenCalledWith({ orderId, manager: undefined });
+    await ReservationService.releaseReservations({ reservationGroupId });
+    expect(ReservationRepository.releaseByGroupId).toHaveBeenCalledWith({ reservationGroupId, manager: undefined });
   });
 });
