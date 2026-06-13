@@ -14,7 +14,10 @@
     "typecheck": "tsc --noEmit",
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/db/dataSource.ts",
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/db/dataSource.ts",
-    "seed": "ts-node src/db/seeds/run.ts"
+    "seed": "ts-node src/db/seeds/run.ts",
+    "seed:reset": "ts-node src/db/seeds/truncate.ts && ts-node src/db/seeds/run.ts",
+    "demo": "RATE_LIMIT_MAX=1000 ts-node src/demo/demo.ts",
+    "load-test": "RATE_LIMIT_MAX=1000 ts-node src/demo/load-test.ts"
   },
   "dependencies": {
     "bullmq": "^5.51.0",
