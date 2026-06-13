@@ -5,7 +5,7 @@
 This service exposes a single `POST /orders` endpoint for an e-commerce platform. It accepts a customer's order (shipping address, items, and payment details), selects the optimal warehouse to fulfil the order, reserves the required inventory atomically, applies jurisdiction-based tax, processes payment, and returns a confirmed order with a full receipt snapshot.
 
 Key guarantees:
-- **Inventory safety** — append-only reservation table with per-SKU distributed locks prevents overselling under concurrent load.
+- **Inventory safety** — append-only reservation table with per-SKU PostgreSQL advisory locks prevents overselling under concurrent load.
 - **Idempotency** — duplicate submissions (retries, double-clicks, network timeouts) return the original response without re-charging.
 - **Financial consistency** — payment charges that cannot be immediately confirmed land in a `PENDING_PAYMENT` state and are reconciled by a background job rather than being incorrectly failed.
 - **Resilience** — circuit breakers on all external gateways, retry logic for transient failures, and a dead-letter queue for unresolvable compensation failures.
@@ -26,8 +26,9 @@ Standalone endpoint for warehouse-based order fulfillment. A customer submits an
 | Framework | Express 5 | Minimal, well-understood |
 | Database | PostgreSQL 16 | ACID transactions |
 | ORM / Migrations | TypeORM | Entities, relations, query builder, and migrations in one package |
-| Cache / locks | Redis (ioredis) | Atomic SET NX for distributed lock; geocode cache; idempotency store |
-| Background jobs | BullMQ | Reservation expiry + order reconciliation workers — built on Redis (no extra infra) |
+| Cache / store | Redis (ioredis) | Geocode cache; idempotency store (atomic SET NX claim); circuit-breaker flags |
+| Concurrency control | PostgreSQL advisory locks | `pg_advisory_xact_lock` per `(warehouseId, productId)` — released atomically at commit, no TTL race |
+| Background jobs | BullMQ | Reservation expiry, fulfillment, and order reconciliation workers — built on Redis (no extra infra) |
 | Validation | Zod | Runtime schema + inferred types |
 | Testing | Vitest + Supertest | Fast, ESM-native; integration tests via Supertest |
 
@@ -107,9 +108,8 @@ src/
 ├── services/                               ← SERVICE LAYER: all business logic
 │   ├── OrderService.ts                     ← Facade entry point
 │   ├── WarehouseSelectionService.ts
-│   ├── ReservationService.ts               ← create / confirm / release reservations
-│   ├── GeocodeService.ts                   ← Redis cache wrapper around GeocodingGateway
-│   └── DistributedLockService.ts
+│   ├── ReservationService.ts               ← create / confirm / release reservations (advisory-locked)
+│   └── GeocodeService.ts                   ← Redis cache wrapper around GeocodingGateway
 │
 ├── controllers/                            ← CONTROLLER LAYER: thin HTTP adapter
 │   └── orderController.ts
@@ -128,12 +128,18 @@ src/
 │
 ├── jobs/
 │   ├── expireReservations.ts               ← BullMQ worker: release stale reservations
+│   ├── fulfillReservations.ts              ← BullMQ worker: roll confirmed reservations into physical stock
 │   └── reconcileOrders.ts                  ← BullMQ worker: resolve PENDING_PAYMENT orders
 │
 ├── util/
 │   ├── haversine.ts
 │   ├── retry.ts
 │   └── logger.ts                           ← structured JSON logging (pino)
+│
+├── demo/                                   ← demo + load-test scripts (see demo/README.md)
+│   ├── demo.ts
+│   ├── load-test.ts
+│   └── README.md
 │
 └── app.ts                                  ← Express app + route registration
 ```
@@ -294,7 +300,7 @@ GROUP BY i.id, i.quantity
 
 Both **`active`** and **`confirmed`** reservations subtract from available stock. This is essential: an order is never decremented from `inventories.quantity` on the order path. When payment succeeds and a reservation flips `active → confirmed`, it must keep counting against availability — otherwise the confirmed stock would reappear as available the moment an order is paid, causing oversell. The `expires_at > NOW()` filter applies only to `active` reservations; `confirmed` reservations never expire and count until the goods physically ship.
 
-`inventories.quantity` represents **physical stock** and is only written during receiving/restocking and physical fulfillment/shipment operations — never on the order path. A `confirmed` reservation continues to hold stock against availability until that out-of-band shipment process decrements `quantity` and clears the reservation.
+`inventories.quantity` represents **physical stock** and is only written during receiving/restocking and by the `fulfillReservations` job — never on the order path. A `confirmed` reservation continues to hold stock against availability until that job decrements `quantity` and flips the reservation to `released` (see [Background Jobs](#background-jobs)).
 
 ### Reservation lifecycle
 
@@ -313,25 +319,27 @@ confirmed  released
 (by reservation_group_id)
 ```
 
-Reservations that reach `expires_at` while still `active` are released by the `expireReservations` background job. `confirmed` reservations are terminal on the order path — they do not expire and continue to subtract from available stock until the out-of-band fulfillment/shipment process decrements physical `inventories.quantity` and clears them.
+Reservations that reach `expires_at` while still `active` are released by the `expireReservations` background job. `confirmed` reservations are terminal on the order path — they do not expire and continue to subtract from available stock until the `fulfillReservations` job decrements physical `inventories.quantity` and flips them to `released`.
 
 ### Lock scope and timing
 
-A distributed lock is acquired **per `(warehouseId, productId)` pair** and held from the availability check through the reservation insert — both operations are within the lock window. This is what makes the reservation atomic: without holding the lock during the check, two concurrent requests can both observe sufficient inventory before either inserts, resulting in oversell.
+A **PostgreSQL advisory transaction lock** is acquired **per `(warehouseId, productId)` pair** and held from the availability check through the reservation insert — both operations run inside one DB transaction. This is what makes the reservation atomic: without holding the lock during the check, two concurrent requests can both observe sufficient inventory before either inserts, resulting in oversell.
 
 ```
-acquire lock: inv-lock:${warehouseId}:${productId}
+BEGIN
+  SELECT pg_advisory_xact_lock(warehouseId, productId)  ← blocks until the pair's lock is free
   ↓
   run availability query          ← inside lock
   ↓
   re-verify quantities sufficient ← inside lock
   ↓
   insert reservation row          ← inside lock
-  ↓
-release lock
+COMMIT                            ← lock released atomically here (or on ROLLBACK)
 ```
 
-Locks are acquired in ascending key order across all items in an order to prevent deadlocks when an order touches multiple products. Two orders for different products in the same warehouse never block each other.
+**Why advisory locks over a Redis `SET NX` lock.** The first design used a Redis distributed lock with a TTL. Two problems under load: (1) if the DB work ran longer than the TTL, the key auto-expired mid-operation and a second holder could enter → oversell; (2) the lock was a single non-blocking attempt, so under a burst of N concurrent requests for the same SKU, one won and the other N−1 failed outright. The advisory lock has no TTL — it is released by the database exactly at commit/rollback, never mid-flight — and `pg_advisory_xact_lock` **blocks and queues** rather than failing, so concurrent same-SKU requests serialize and all succeed (up to available stock) instead of erroring. The two-int4 overload maps the `(warehouseId, productId)` natural key directly with no hashing.
+
+Locks are acquired in ascending `productId` order across all items in an order to prevent deadlocks when an order touches multiple products. Two orders for different products in the same warehouse never block each other.
 
 ### Throughput comparison
 
@@ -390,13 +398,15 @@ The route layer is purely infrastructural: rate limiting, validation, delegation
 The controller is the natural home for idempotency — it is the layer that decides whether to invoke business logic at all, it already has the validated DTO (including `idempotencyKey`), and it is where the response is first constructed, making it clean to store immediately after `OrderService` returns.
 
 ```
-1. Check idempotency key        ← IdempotencyRepository.get(key) → return cached response if found
+1. Claim idempotency key        ← IdempotencyRepository.claim(key, 24h)  ← atomic SET NX "pending"
+   - not claimed → get(key): cached response present → return it; else 409 (still in flight)
 2. Call OrderService.createOrder(dto)
-3. Store idempotency key        ← IdempotencyRepository.set(key, response, 24h)
+3. Store response               ← IdempotencyRepository.set(key, response, 24h)  ← overwrites "pending"
+   - on any throw → IdempotencyRepository.release(key) so the key can be retried, then rethrow
 4. Return 201 { orderId, subtotal, taxAmount, total, warehouseId, status }
 ```
 
-The controller never calls repositories other than `IdempotencyRepository`. All business logic flows through `OrderService`.
+The claim is an atomic `SET NX`, not a read-then-write: only the first of N concurrent requests with the same key wins, closing the race where two requests both miss the cache and both charge. The controller never calls repositories other than `IdempotencyRepository`. All business logic flows through `OrderService`.
 
 ### Service Layer — `src/services/`
 
@@ -422,17 +432,18 @@ The controller never calls repositories other than `IdempotencyRepository`. All 
 
 Inventory is reserved at step 4 — before the tax gateway call and before any order write. Reservations key on `reservationGroupId` rather than `orderId`, so they no longer depend on an existing order row. Failing fast here avoids a wasted tax call and order insert when stock is unavailable, and means a failed reservation never leaves an orphaned `PENDING_PAYMENT` order. The order in step 7 is created only once inventory is secured, and the compensating release on step 11 keys by `reservationGroupId` — marking the order `FAILED` only if it had already been inserted.
 
-**`ReservationService.createReservations`** — for each `(warehouseId, productId)` pair, in ascending key order:
+**`ReservationService.createReservations`** — for each `(warehouseId, productId)` pair, in ascending `productId` order, each within its own transaction:
 
 ```
-1. Acquire distributed lock: inv-lock:${warehouseId}:${productId}
-2. Query available inventory             ← inside lock
-3. Throw InsufficientInventoryError if quantity < requested  ← inside lock
-4. Insert reservation row (reservation_group_id, status='active', expires_at=NOW()+10min)  ← inside lock
-5. Release lock
+1. BEGIN transaction (opened by the service; manager passed to each repository call)
+2. InventoryRepository.lockForReservation(warehouseId, productId, manager)  ← blocks until the pair's lock is free
+3. InventoryRepository.getAvailable(...)  ← inside lock, on the transaction's manager
+4. Throw InsufficientInventoryError if quantity < requested  ← inside lock (rolls back → lock released)
+5. ReservationRepository.insert(reservation_group_id, status='active', expires_at=NOW()+10min, manager)  ← inside lock
+6. COMMIT                                                     ← lock released atomically
 ```
 
-The lock is held across steps 2–4. This is what prevents two concurrent requests from both observing sufficient inventory before either inserts. Each insert is autocommitted within the lock window — **never wrapped in a longer transaction** — so a concurrent request's availability query sees the committed row immediately. The reservation row carries `reservation_group_id` (passed in by `OrderService`), not an `order_id`.
+The raw `SELECT pg_advisory_xact_lock(...)` lives in `InventoryRepository.lockForReservation` — all SQL stays in the data layer; the service only opens the transaction and orchestrates the calls. The advisory lock is held across steps 3–5 and released by the database exactly at COMMIT/ROLLBACK. This is what prevents two concurrent requests from both observing sufficient inventory before either inserts, and — unlike a TTL-bounded Redis lock — it can never expire mid-operation. The reservation row carries `reservation_group_id` (passed in by `OrderService`), not an `order_id`.
 
 **`GeocodeService`** — cache wrapper with circuit breaker scoped to the gateway call:
 
@@ -451,9 +462,8 @@ The circuit breaker is checked only on a cache miss, immediately before the gate
 Sub-services called internally by `OrderService`:
 
 - `WarehouseSelectionService` — queries available inventory from `InventoryRepository`, geocodes address via `GeocodeService`, scores by haversine distance
-- `ReservationService` — acquires per-product locks (check + insert within lock window), inserts reservations
+- `ReservationService` — per-product advisory-locked transaction (check + insert within the lock window), inserts reservations
 - `GeocodeService` — Redis cache wrapper around `GeocodingGateway`, circuit breaker on cache miss only
-- `DistributedLockService` — Redis SET NX wrapper
 
 ### Data Layer — `src/repositories/`
 
@@ -465,9 +475,9 @@ All TypeORM queries are isolated here. Services call repositories; repositories 
 | `OrderItemRepository` | insertMany with full snapshots |
 | `ProductRepository` | findByIds (price, name, sku, tax_code lookup at order time) |
 | `WarehouseRepository` | findAll with coordinates |
-| `InventoryRepository` | available inventory query (physical − active reservations) |
-| `ReservationRepository` | insert (by reservation_group_id), confirmByGroupId, releaseByGroupId, findExpired |
-| `IdempotencyRepository` | Redis GET / SET EX (no TypeORM — Redis-backed) |
+| `InventoryRepository` | available inventory query (physical − active/confirmed reservations); lockForReservation (advisory lock); decrementQuantity (fulfillment) |
+| `ReservationRepository` | insert (by reservation_group_id), confirmByGroupId, releaseByGroupId, releaseExpiredActive, findConfirmedGrouped |
+| `IdempotencyRepository` | Redis claim (SET NX) / get / set EX / release (no TypeORM — Redis-backed) |
 
 ---
 
@@ -497,7 +507,12 @@ The dead-letter queue is a BullMQ queue with no automatic retry. An alert fires 
 
 The `idempotency_key` column on `orders` has a `UNIQUE` constraint as a DB-level safety net. The primary idempotency check happens in the controller layer via Redis (TTL 24h) — it short-circuits before business logic is invoked, returning the original response without re-executing any business logic.
 
-Any duplicate submission due to client retry, network timeout, or double-click is handled transparently.
+The check is an **atomic claim**, not a read-then-write. The controller calls `IdempotencyRepository.claim(key)` which does `SET key "pending" NX EX 24h`:
+
+- **First request wins the claim** → proceeds through `OrderService`, then overwrites `"pending"` with the real response via `set()`. If it throws, `release(key)` deletes the claim so the client can retry.
+- **A duplicate or concurrent request fails the claim** → it reads `get(key)`: a completed original returns its cached response; a still-in-flight request (only the `"pending"` sentinel, which `get()` treats as no-response) returns `409 Conflict`.
+
+This closes the check-then-set race where two simultaneous requests both read `null` from a plain GET and both proceed to reserve inventory and charge the card. Any duplicate submission due to client retry, network timeout, or double-click is handled transparently.
 
 ---
 
@@ -562,23 +577,41 @@ Accessing `.paymentReference` on a `PENDING_PAYMENT` order is a compile-time err
 | `payment_gateway_error_rate` | Gauge | Rolling error % on payment calls |
 | `tax_gateway_error_rate` | Gauge | Rolling error % on tax calls |
 | `inventory_reservations_expired_total` | Counter | Reservations released by expiry job |
+| `inventory_fulfilled_total` | Counter | Confirmed reservations rolled into physical stock by the fulfillment job |
 | `dead_letter_queue_depth` | Gauge | Unresolved compensating transaction failures |
 
 ---
 
 ## Background Jobs
 
-**`src/jobs/expireReservations.ts`** — BullMQ repeatable, every 1 minute.
+**`src/jobs/expireReservations.ts`** — BullMQ repeatable, every 1 minute. Set-based — both steps run in one transaction, no per-row loop.
 
 ```
-1. ReservationRepository.findExpired()
-   → SELECT WHERE status='active' AND expires_at < NOW()
-2. For each: ReservationRepository.releaseByGroupId(reservationGroupId)
-3. If an order exists for that reservation_group_id and is still PENDING_PAYMENT:
-   OrderRepository.updateStatus(orderId, 'FAILED')
-   (a reservation whose order was never created simply releases — nothing to fail)
-4. Emit metric: inventory_reservations_expired_total++
+1. ReservationRepository.releaseExpiredActive()
+   → UPDATE inventory_reservations SET status='released'
+     WHERE status='active' AND expires_at < NOW()
+     RETURNING reservation_group_id        ← one statement, returns affected groups
+2. OrderRepository.failPendingByGroupIds(distinct groupIds)
+   → set any still-PENDING_PAYMENT order on those groups to FAILED in one statement
+     (a reservation whose order was never created simply releases — nothing to fail)
+3. Emit metric: inventory_reservations_expired_total++
 ```
+
+**`src/jobs/fulfillReservations.ts`** — BullMQ repeatable, every 5 minutes. Rolls `confirmed` reservations into physical stock so they stop accumulating: the availability query sums every `confirmed` row, so without this a hot SKU would build unbounded rows and the query would degrade linearly.
+
+```
+1. ReservationRepository.findConfirmedGrouped({ limit: 500 })
+   → SELECT inventory_id, SUM(quantity), ARRAY_AGG(id)
+     FROM inventory_reservations WHERE status='confirmed'
+     GROUP BY inventory_id LIMIT 500       ← batched so a backlog drains over several runs
+2. For each inventory group, in its own transaction:
+   a. InventoryRepository.decrementQuantity(inventory_id, SUM)   ← physical stock -= confirmed total
+   b. UPDATE inventory_reservations SET status='released'
+      WHERE id = ANY(ids) AND status='confirmed'                 ← release exactly the summed rows
+3. Emit metric: inventory_fulfilled_total++
+```
+
+The decrement and release commit atomically per inventory row. The `CHECK (quantity >= 0)` constraint guards against over-decrement (the transaction rolls back, leaving the rows `confirmed` for the next run), and the `AND status='confirmed'` guard makes overlapping runs safe. Per-inventory transactions keep lock windows short instead of holding 500 rows for the whole batch.
 
 **`src/jobs/reconcileOrders.ts`** — BullMQ repeatable, every 5 minutes.
 
@@ -593,50 +626,14 @@ Accessing `.paymentReference` on a `PENDING_PAYMENT` order is a compile-time err
 
 ---
 
-## Tests
+## Demo & Load Testing
 
-**Integration** (`src/routes/orders.test.ts`) — Supertest against a real test DB (`orders_test`, seeded before each suite). Gateways stubbed with Vitest `vi.spyOn`.
+Two runnable scripts live under `src/demo/`, both driving a live server over HTTP (no test doubles):
 
-| Case | Expected |
-|---|---|
-| Happy path (mixed tax codes) | 201, correct subtotal + tax + total, snapshot written |
-| No warehouse can fulfill | 409 |
-| Available inventory changes between selection and reservation insert | 409 from re-verify under lock |
-| Duplicate idempotency key | 201 cached response, no second charge |
-| Payment declined | 402, reservations released, status FAILED |
-| Payment circuit breaker open | 503 |
-| Geocoding circuit breaker open (cache miss) | 503 |
-| Geocoding circuit breaker open (cache hit) | 200 — circuit bypassed |
-| Tax circuit breaker open | 503 |
-| Unknown tax code on product | 422 |
-| Rate limit exceeded | 429 |
-| Reservation expires before payment confirmed | order FAILED by expiry job |
-| Compensating transaction fails | event enqueued in dead-letter queue |
-| Receipt snapshot immutable after product price update | snapshot shows original price |
-| Receipt snapshot immutable after product tax code update | snapshot shows original tax rate |
+- **`demo.ts`** (`npm run demo`) — a guided walkthrough of 8 scenarios with colour-coded pass/fail output: happy path with mixed tax codes, warehouse routing, idempotency, payment declined, insufficient inventory, the payment and tax circuit breakers, and a concurrent mini-burst against a single SKU.
+- **`load-test.ts`** (`npm run load-test`) — concurrent stress tests: a throughput run (100 simultaneous orders against ample stock, all confirm) and an oversell-prevention run (60 simultaneous orders against 50 units — confirms ≤ 50, proving the advisory lock holds under load).
 
-**Unit** — `haversine.test.ts`, `WarehouseSelectionService.test.ts`, `DistributedLockService.test.ts`, `ReservationService.test.ts`, `TaxGateway.test.ts`
-
-**Load test** (`src/load-test.ts`) — 100 concurrent orders on the same warehouse/product:
-
-```ts
-const orders = Array(100).fill(null).map((_, i) => ({
-  customerId: i + 1,
-  items: [{ productId: 1, quantity: 1 }],
-  shippingAddress: randomAddress(),
-  cardNumber: '4111111111111111',
-  idempotencyKey: `load-test-${i}`
-}))
-
-const start = Date.now()
-const results = await Promise.allSettled(orders.map(o => api.post('/orders', o)))
-const duration = Date.now() - start
-
-const confirmed = results.filter(r => r.status === 'fulfilled').length
-console.log(`${confirmed}/100 confirmed in ${duration}ms`)
-```
-
-Expected: all 100 complete in <500ms total. No oversell — confirmed orders must not exceed physical stock.
+For setup, prerequisites, and a per-scenario breakdown, see **[`src/demo/README.md`](src/demo/README.md)**.
 
 ---
 
@@ -671,8 +668,9 @@ curl -X POST http://localhost:3000/orders \
 # Run tests
 npm test
 
-# Run load test
-npx ts-node src/load-test.ts
+# Demo walkthrough + load tests (see src/demo/README.md)
+npm run demo
+npm run load-test
 ```
 
 ---
@@ -690,18 +688,17 @@ Sequential commits. Each item is roughly one logical unit of work.
 - [x] TypeORM entities — `Customer`, `Product`, `Warehouse`, `Inventory`, `InventoryReservation`, `Order`, `OrderItem`
 - [x] Repositories — `OrderRepository`, `OrderItemRepository`, `ProductRepository`, `WarehouseRepository`, `InventoryRepository`, `ReservationRepository`, `IdempotencyRepository`
 - [x] Utilities — `haversine.ts`, `retry.ts`, `logger.ts` (pino)
-- [x] `DistributedLockService` — Redis `SET NX EX` wrapper with `acquire` / `release`
 - [x] Mock gateways — `GeocodingGateway`, `PaymentGateway` (with `PaymentDeclinedError` hook), `TaxGateway` (with `TaxCalculationError` hook)
 - [x] `GeocodeService` — Redis cache wrapper; circuit breaker checked on cache miss only
 - [x] `WarehouseSelectionService` — eligible warehouse query + haversine sort
-- [x] `ReservationService` — per-product lock (check + insert within lock window), confirm, release
+- [x] `ReservationService` — per-product advisory-locked transaction (check + insert within the lock window), confirm, release
 - [x] `OrderService` (Facade) — orchestrates subtotal, warehouse selection, tax, reservation, payment, compensation, dead-letter queue
 - [x] Middleware — `rateLimiter.ts` (per-IP sliding window), `circuitBreaker.ts` (Redis flag reader)
-- [x] Controller — `orderController.ts` with idempotency check + store
+- [x] Controller — `orderController.ts` with atomic idempotency claim + store
 - [x] Route — `POST /orders` pipeline (rate limit → validate → controller)
 - [x] Express app wiring — `app.ts`, `src/main.ts` server entry
 - [x] BullMQ job: `expireReservations` (every 1 min)
+- [x] BullMQ job: `fulfillReservations` (every 5 min)
 - [x] BullMQ job: `reconcileOrders` (every 5 min)
-- [ ] Unit tests — `haversine`, `WarehouseSelectionService`, `DistributedLockService`, `ReservationService`, `TaxGateway`
-- [ ] Integration tests — all cases in the Tests section
-- [ ] Load test — `src/load-test.ts`
+- [x] Unit tests — `haversine`, `WarehouseSelectionService`, `ReservationService`, `TaxGateway`, jobs, controller
+- [x] Demo + load-test scripts — `src/demo/` (see `src/demo/README.md`)

@@ -1,6 +1,17 @@
-# place-order
+# `POST /orders` — warehouse-based order fulfillment endpoint.
 
-`POST /orders` — warehouse-based order fulfillment endpoint.
+## Overview
+
+This service exposes a single `POST /orders` endpoint for an e-commerce platform. It accepts a customer's order (shipping address, items, and payment details), selects the optimal warehouse to fulfil the order, reserves the required inventory atomically, applies jurisdiction-based tax, processes payment, and returns a confirmed order with a full receipt snapshot.
+
+Key guarantees:
+
+- **Inventory safety** — append-only reservation table with per-SKU PostgreSQL advisory locks prevents overselling under concurrent load.
+- **Idempotency** — duplicate submissions (retries, double-clicks, network timeouts) return the original response without re-charging.
+- **Financial consistency** — payment charges that cannot be immediately confirmed land in a `PENDING_PAYMENT` state and are reconciled by a background job rather than being incorrectly failed.
+- **Resilience** — circuit breakers on all external gateways, retry logic for transient failures, and a dead-letter queue for unresolvable compensation failures.
+
+The full design for this solution can be found in `docs/design_doc.md`.
 
 ## Prerequisites
 
