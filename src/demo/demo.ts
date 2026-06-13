@@ -203,18 +203,16 @@ async function main(): Promise<void> {
   {
     sectionHeader(8, 'CONCURRENT MINI-BURST');
     const BURST = 10;
-    const STAGGER_MS = 30;
     const start = performance.now();
     const responses = await Promise.all(
       Array.from({ length: BURST }, (_, i) =>
-        new Promise<void>((resolve) => setTimeout(resolve, i * STAGGER_MS))
-          .then(() => post({
-            customerId: 1,
-            shippingAddress: '123 Pine St, Seattle WA',
-            items: [{ productId: 1, quantity: 1 }],
-            cardNumber: VALID_CARD,
-            idempotencyKey: ikey(`s8-${i}`),
-          })),
+        post({
+          customerId: 1,
+          shippingAddress: '123 Pine St, Seattle WA',
+          items: [{ productId: 1, quantity: 1 }],
+          cardNumber: VALID_CARD,
+          idempotencyKey: ikey(`s8-${i}`),
+        }),
       ),
     );
     const elapsed = Math.round(performance.now() - start);
@@ -222,7 +220,7 @@ async function main(): Promise<void> {
     const orderIds = confirmed.map((r) => (r.body as OrderResponse).orderId);
     const uniqueIds = new Set(orderIds);
     const p1 = check(confirmed.length === BURST, `All ${BURST} concurrent orders → 201 CONFIRMED`, `Only ${confirmed.length}/${BURST} confirmed`);
-    const p2 = check(uniqueIds.size === confirmed.length, `All confirmed orders have unique orderId`, `Duplicate orderIds detected`);
+    const p2 = check(uniqueIds.size === BURST, `All ${BURST} orders have unique orderId (no duplicate processing)`, `Duplicate orderIds detected`);
     console.log(`  ${D}${BURST} requests completed in ${elapsed}ms${X}`);
     results.push({ name: 'Concurrent mini-burst', passed: p1 && p2 });
   }

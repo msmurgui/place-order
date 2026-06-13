@@ -9,21 +9,81 @@ interface InsertReservationData {
   expiresAt: Date;
 }
 
+export interface ConfirmedReservationGroup {
+  inventoryId: number;
+  totalQuantity: number;
+  reservationIds: number[];
+}
+
 class _ReservationRepository extends BaseRepository<InventoryReservation> {
   constructor() {
     super(InventoryReservation);
   }
 
-  async insert(data: InsertReservationData): Promise<InventoryReservation> {
-    return this.repo.save(this.repo.create({ ...data, status: 'active' }));
+  // Accepts an optional manager so the insert can run inside the caller's transaction —
+  // it shares the advisory-lock window opened in ReservationService.createReservations.
+  async insert(
+    data: InsertReservationData,
+    manager?: EntityManager
+  ): Promise<InventoryReservation> {
+    const repo = this.getRepo(manager);
+    return repo.save(repo.create({ ...data, status: 'active' }));
   }
 
-  async confirmByGroupId({ reservationGroupId, manager }: { reservationGroupId: string; manager?: EntityManager }): Promise<void> {
-    await this.getRepo(manager).update({ reservationGroupId, status: 'active' }, { status: 'confirmed' });
+  // Rolls up confirmed reservations per inventory row.
+  async findConfirmedGrouped({
+    limit,
+    manager,
+  }: {
+    limit: number;
+    manager?: EntityManager;
+  }): Promise<ConfirmedReservationGroup[]> {
+    const runner = manager ?? this.dataSource;
+    const rows = await runner.query<
+      { inventory_id: string; total_quantity: string; reservation_ids: string[] }[]
+    >(
+      `SELECT inventory_id,
+              SUM(quantity) AS total_quantity,
+              ARRAY_AGG(id) AS reservation_ids
+       FROM inventory_reservations
+       WHERE status = 'confirmed'
+       GROUP BY inventory_id
+       ORDER BY inventory_id
+       LIMIT $1`,
+      [limit]
+    );
+
+    return rows.map((r) => ({
+      inventoryId: parseInt(r.inventory_id, 10),
+      totalQuantity: parseInt(r.total_quantity, 10),
+      reservationIds: r.reservation_ids.map((id) => parseInt(id, 10)),
+    }));
   }
 
-  async releaseByGroupId({ reservationGroupId, manager }: { reservationGroupId: string; manager?: EntityManager }): Promise<void> {
-    await this.getRepo(manager).update({ reservationGroupId, status: 'active' }, { status: 'released' });
+  async confirmByGroupId({
+    reservationGroupId,
+    manager,
+  }: {
+    reservationGroupId: string;
+    manager?: EntityManager;
+  }): Promise<void> {
+    await this.getRepo(manager).update(
+      { reservationGroupId, status: 'active' },
+      { status: 'confirmed' }
+    );
+  }
+
+  async releaseByGroupId({
+    reservationGroupId,
+    manager,
+  }: {
+    reservationGroupId: string;
+    manager?: EntityManager;
+  }): Promise<void> {
+    await this.getRepo(manager).update(
+      { reservationGroupId, status: 'active' },
+      { status: 'released' }
+    );
   }
 
   // Set-based: releases every expired active reservation in one statement and returns the

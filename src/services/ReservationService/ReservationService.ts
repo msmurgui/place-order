@@ -1,12 +1,10 @@
 import { EntityManager } from 'typeorm';
 import { env } from '../../config/env';
+import { AppDataSource } from '../../db/dataSource';
 import { InventoryRepository } from '../../repositories/InventoryRepository';
 import { ReservationRepository } from '../../repositories/ReservationRepository';
 import { InsufficientInventoryError } from '../../util/errors';
 import { logger } from '../../util/logger';
-import { DistributedLockService } from '../DistributedLockService';
-
-const LOCK_TTL_MS = 5_000;
 
 interface ReservationItem {
   productId: number;
@@ -30,36 +28,39 @@ class _ReservationService {
     const sortedReservationItems = [...reservationItems].sort((a, b) => a.productId - b.productId);
 
     for (const reservationItem of sortedReservationItems) {
-      const lockKey = `inv-lock:${warehouseId}:${reservationItem.productId}`;
-      const token = await DistributedLockService.acquire({ key: lockKey, ttlMs: LOCK_TTL_MS });
+      await AppDataSource.transaction(async (manager) => {
+        // Serialize concurrent orders for this (warehouseId, productId) to prevent overselling.
+        // The lock is held only for the availability check + reservation insert below, and released
+        // when this transaction commits/rolls back. Raw SQL lives in the data layer (InventoryRepository).
+        await InventoryRepository.lockForReservation({
+          warehouseId,
+          productId: reservationItem.productId,
+          manager,
+        });
 
-      if (!token) {
-        throw new Error(`Failed to acquire inventory lock for product ${reservationItem.productId}`);
-      }
-
-      try {
         // Both the check and the insert happen inside the lock — this is what prevents oversell.
         const availableInventory = await InventoryRepository.getAvailable({
           warehouseId,
           productId: reservationItem.productId,
+          manager,
         });
 
         if (!availableInventory || availableInventory.available < reservationItem.quantity) {
           throw new InsufficientInventoryError();
         }
 
-        await ReservationRepository.insert({
-          inventoryId: availableInventory.inventoryId,
-          reservationGroupId,
-          quantity: reservationItem.quantity,
-          expiresAt,
-        });
+        await ReservationRepository.insert(
+          {
+            inventoryId: availableInventory.inventoryId,
+            reservationGroupId,
+            quantity: reservationItem.quantity,
+            expiresAt,
+          },
+          manager
+        );
 
         logger.info({ warehouseId, productId: reservationItem.productId, reservationGroupId }, 'reservation created');
-      } finally {
-        // Guaranteed release — even if the availableInventory check or insert throws.
-        await DistributedLockService.release({ key: lockKey, token });
-      }
+      });
     }
   }
 

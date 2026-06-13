@@ -3,7 +3,7 @@ import type { Request, Response } from 'express';
 import type { Order } from '../entities/Order';
 
 vi.mock('../repositories/IdempotencyRepository', () => ({
-  IdempotencyRepository: { get: vi.fn(), set: vi.fn() },
+  IdempotencyRepository: { claim: vi.fn(), get: vi.fn(), set: vi.fn(), release: vi.fn() },
 }));
 vi.mock('../services/OrderService/OrderService', () => ({ OrderService: { placeOrder: vi.fn() } }));
 
@@ -47,8 +47,10 @@ const buildRes = (): Response => {
 const buildReq = (): Request => ({ body: { orderToPlace } }) as Request;
 
 beforeEach(() => {
+  vi.mocked(IdempotencyRepository.claim).mockResolvedValue(true);
   vi.mocked(IdempotencyRepository.get).mockResolvedValue(null);
   vi.mocked(IdempotencyRepository.set).mockResolvedValue(undefined);
+  vi.mocked(IdempotencyRepository.release).mockResolvedValue(undefined);
   vi.mocked(OrderService.placeOrder).mockResolvedValue({ order: confirmedOrder });
 });
 
@@ -57,11 +59,12 @@ afterEach(() => {
 });
 
 describe('placeOrderController', () => {
-  it('places the order, stores the idempotency key, and returns 201', async () => {
+  it('claims the key, places the order, stores the response, and returns 201', async () => {
     const res = buildRes();
 
     await placeOrderController(buildReq(), res);
 
+    expect(IdempotencyRepository.claim).toHaveBeenCalledWith('idem-1', 24 * 60 * 60);
     expect(OrderService.placeOrder).toHaveBeenCalledWith(orderToPlace);
     expect(IdempotencyRepository.set).toHaveBeenCalledWith({
       key: 'idem-1',
@@ -72,7 +75,8 @@ describe('placeOrderController', () => {
     expect(res.json).toHaveBeenCalledWith(expectedBody);
   });
 
-  it('returns the cached response without re-running business logic on a duplicate key', async () => {
+  it('returns the cached response without re-running business logic on a completed duplicate', async () => {
+    vi.mocked(IdempotencyRepository.claim).mockResolvedValue(false);
     vi.mocked(IdempotencyRepository.get).mockResolvedValue({ statusCode: 201, body: expectedBody });
     const res = buildRes();
 
@@ -84,12 +88,24 @@ describe('placeOrderController', () => {
     expect(res.json).toHaveBeenCalledWith(expectedBody);
   });
 
-  it('propagates service errors and does not cache a failed attempt', async () => {
+  it('returns 409 when a request with the same key is still in flight', async () => {
+    vi.mocked(IdempotencyRepository.claim).mockResolvedValue(false);
+    vi.mocked(IdempotencyRepository.get).mockResolvedValue(null);
+    const res = buildRes();
+
+    await placeOrderController(buildReq(), res);
+
+    expect(OrderService.placeOrder).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(409);
+  });
+
+  it('releases the claim and propagates the error when the service throws', async () => {
     vi.mocked(OrderService.placeOrder).mockRejectedValue(new Error('payment declined'));
     const res = buildRes();
 
     await expect(placeOrderController(buildReq(), res)).rejects.toThrow('payment declined');
 
+    expect(IdempotencyRepository.release).toHaveBeenCalledWith('idem-1');
     expect(IdempotencyRepository.set).not.toHaveBeenCalled();
     expect(res.status).not.toHaveBeenCalled();
   });

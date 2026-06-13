@@ -1,36 +1,99 @@
 # High-Traffic Assessment — Inventory Reservation Path
 
-Honest verdict: the **reserve-early + group-id change itself is solid** and strictly better than what we have — fail-fast, no orphan orders, inventory locked ASAP. The surrounding architecture (reservation table, snapshots, circuit breakers, compensation) is sound. But if you're asking whether *the whole inventory path* withstands genuinely high traffic, the honest answer is: **the Redis distributed lock is the ceiling, and it's also a correctness hazard.** That's the thing I'd change before anything else.
+## Summary
 
-## The real bottleneck: the Redis lock around a DB check+insert
+This document records an analysis of the inventory reservation path under high traffic and the
+decisions taken as a result. The reserve-early plus group-id model is sound — it fails fast, leaves
+no orphan orders, and locks inventory as early as possible — and the surrounding architecture
+(reservation table, snapshots, circuit breakers, compensation) holds up. The limiting factor was the
+**Redis distributed lock around the database check-and-insert**: it capped throughput on hot SKUs and,
+more importantly, was a correctness hazard. Replacing it was prioritised over every other change.
 
-For a hot SKU, every order serializes on `inv-lock:wh:prod`, and we hold that lock across *a DB query + a DB insert + two Redis round trips*. Two problems at scale:
+## Analysis: the Redis lock around a DB check-and-insert
 
-1. **Throughput** — hot-SKU rate is capped at `1 / lock_hold_time`. With Redis hops + a DB query + insert in the window, that's the ceiling, and it's higher than it needs to be.
-2. **Correctness** — the lock has a 5s TTL. Under load (GC pause, slow query, pool wait), the operation can exceed the TTL, the lock **auto-expires mid-flight**, a second thread proceeds, and you **oversell**. The token-based release protects the *release*, not the *hold*. So inventory correctness is hostage to "the DB op always finishes within 5s under peak load" — which is exactly when it won't.
+For a hot SKU, every order serialized on `inv-lock:wh:prod`, and that lock was held across *a DB
+query, a DB insert, and two Redis round trips*. Two problems emerged at scale:
 
-And it couples inventory correctness to Redis liveness, on the same Redis instance that's also doing idempotency, rate limiting, circuit breakers, geocode cache, and BullMQ.
+1. **Throughput.** The hot-SKU rate was capped at `1 / lock_hold_time`. With Redis hops plus a DB
+   query and insert inside the window, that ceiling was lower than it needed to be.
+2. **Correctness.** The lock carried a 5-second TTL. Under load (a GC pause, a slow query, a
+   connection-pool wait), the operation could exceed the TTL, the lock would **auto-expire
+   mid-flight**, a second worker would proceed, and the system would **oversell**. The token-based
+   release protected the *release*, not the *hold*. Inventory correctness was therefore hostage to
+   "the DB operation always finishes within 5 seconds under peak load" — precisely the condition that
+   fails when it matters most.
 
-**What I'd do instead: serialize in Postgres with an advisory transaction lock** keyed on `inventory_id` (which *is* the (warehouse, product) pair):
+The lock also coupled inventory correctness to Redis liveness, on the same Redis instance already
+serving idempotency, rate limiting, circuit breakers, the geocode cache, and BullMQ.
+
+## Decision: serialize in Postgres with an advisory transaction lock
+
+The chosen replacement is a PostgreSQL advisory transaction lock keyed on the `(warehouseId,
+productId)` pair, taken as the first statement inside the reservation transaction:
 
 ```sql
 BEGIN;
-SELECT pg_advisory_xact_lock(hashtext('inv:' || :inventoryId));
--- availability check (active + confirmed)
+SELECT pg_advisory_xact_lock(:warehouseId, :productId);
+-- availability check (active + confirmed reservations)
 -- INSERT reservation if sufficient
 COMMIT;
 ```
 
-This is faster (no Redis round trips), correct (no TTL — the lock auto-releases *at commit*, never mid-operation), and decouples inventory from Redis entirely.
+This is faster (no Redis round trips), correct (no TTL — the lock auto-releases *at commit*, never
+mid-operation), and decouples inventory from Redis entirely. The two-integer form maps the
+`(warehouseId, productId)` natural key directly, with no hashing. A fuller treatment of the mechanism
+and the rationale is in [`advisory-locks.md`](advisory-locks.md).
 
-**This also resolves the "reservations must not be in a transaction" constraint** — and it's worth seeing why. That rule only existed *because* the Redis lock releases independently of the DB commit: wrap the insert in a transaction and you'd release the lock before committing, so the next thread reads stale availability → oversell. With an *in-DB* advisory lock, **lock-release and commit are the same event** — the next waiter can't run its check until this transaction commits, at which point the row is already visible. So the insert living in a transaction becomes not just safe but *correct*, and the reasoning gets simpler, not harder. Same per-SKU serialization granularity, just cheaper and without the footgun.
+The change also resolves the earlier "reservations must not be wrapped in a transaction" constraint,
+and it is worth recording why. That rule existed *only because* the Redis lock released independently
+of the DB commit: wrapping the insert in a transaction would release the lock before committing, so
+the next worker could read stale availability and oversell. With an *in-database* advisory lock,
+**lock-release and commit are the same event** — the next waiter cannot run its check until this
+transaction commits, by which point the row is already visible. The insert living in a transaction
+becomes not merely safe but *correct*, and the reasoning gets simpler rather than harder. The
+per-SKU serialization granularity is unchanged; it is simply cheaper and free of the footgun.
 
-## Three more that bite at high traffic (ranked)
+## The trade-off
 
-1. **The availability `SUM` grows with accumulated `confirmed` rows.** We made confirmed reservations count until physical shipment. If the out-of-band shipment reaper is slow or absent, a popular SKU accumulates millions of confirmed rows and every availability check sums a growing set. Needs either a reaper that rolls confirmed → physical `quantity` decrement (clearing the rows), or a denormalized `reserved_qty` rollup. Without it, the hot path degrades over time.
+Advisory locks serialize same-SKU requests: for one hot SKU, orders are processed one at a time. This
+is acceptable because the lock window is small — one indexed read, one insert, and a commit, in the
+single-digit-millisecond range. Even a viral SKU handling hundreds of concurrent orders drains in
+well under a second, which the load test confirms. This is the *same* serialization the Redis lock
+was always intended to provide; the change does not introduce a new bottleneck, it makes the existing
+one correct and non-failing.
 
-2. **The expiry job must be set-based.** The design's "for each expired reservation, release it" is per-row. Under a spike of expirations that's thousands of `UPDATE`s/minute. It has to be a single `UPDATE ... WHERE status='active' AND expires_at < NOW()` (batched/limited), not a loop.
+The design deliberately avoids `SELECT FOR UPDATE` on the inventory row, which would hold a lock
+across the *entire* order transaction — including the tax-gateway and payment calls, hundreds of
+milliseconds each. The advisory lock wraps only the check and insert; the slow external calls run
+*outside* it, preserving the short critical section the reservation-table design depends on.
 
-3. **Idempotency is check-then-set, which races.** Two concurrent requests with the same key can both miss the Redis check before either stores, then both reserve and potentially both charge. The DB unique constraint catches the duplicate *order* row, but only after one has already reserved/charged. It should be an atomic `SET NX` claim at the very start of the route, not a get-then-set.
+The net effect, measured against the load test: hot-SKU confirmations went from 1 of 100 to 100 of
+100, while the oversell guarantee held exactly (50 of 60 confirmed against 50 units of stock, the
+remaining 10 cleanly rejected).
 
-None of these block the reserve-early refactor — they're independent. Suggested sequencing: (1) do the group-id reserve-early change as planned, (2) swap the Redis lock for the advisory lock in the same pass since they touch the same code, then tackle the reaper/expiry/idempotency items separately.
+## Additional findings addressed alongside the lock change
+
+Three further issues degrade under high traffic. They are independent of the reserve-early refactor
+and were addressed as part of the same effort.
+
+1. **Availability query growth from accumulated `confirmed` rows.** Confirmed reservations count
+   against availability until physical shipment, so a popular SKU would accumulate a large set of
+   `confirmed` rows that every availability check must sum, degrading the hot path over time. The
+   decision was to add a scheduled reaper that rolls confirmed reservations into a physical
+   `inventories.quantity` decrement and marks those rows released, keeping the summed set bounded.
+
+2. **Per-row expiry job.** A "for each expired reservation, release it" loop becomes thousands of
+   `UPDATE`s per minute under a spike of expirations. The expiry job was made set-based — a single
+   `UPDATE … WHERE status = 'active' AND expires_at < NOW()` (batched), not a loop.
+
+3. **Check-then-set idempotency race.** Two concurrent requests with the same key could both miss the
+   Redis check before either stored a value, then both reserve inventory and potentially both charge.
+   The database unique constraint catches the duplicate *order* row, but only after one request has
+   already reserved and charged. The fix was an atomic `SET NX` claim at the start of the request
+   rather than a get-then-set.
+
+## Sequencing
+
+The Redis lock was replaced with the advisory lock in the same pass as the reserve-early plus
+group-id change, since both touch the same code path. The reaper, set-based expiry, and atomic
+idempotency claim were handled as separate, independent changes.
