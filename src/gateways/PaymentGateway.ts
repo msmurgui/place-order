@@ -10,6 +10,8 @@ export class PaymentDeclinedError extends Error {
   }
 }
 
+export type PaymentStatus = 'succeeded' | 'failed' | 'pending' | 'unknown';
+
 class _PaymentGateway {
   async charge({
     total,
@@ -32,7 +34,7 @@ class _PaymentGateway {
     return { reference: randomUUID() };
   }
 
-  async getStatus(_reference: string): Promise<'succeeded' | 'failed' | 'unknown'> {
+  async getStatus(_reference: string): Promise<PaymentStatus> {
     return 'succeeded';
   }
 }

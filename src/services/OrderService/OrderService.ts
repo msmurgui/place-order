@@ -1,7 +1,9 @@
 import { randomUUID } from 'crypto';
 import type { Order } from '../../entities/Order';
+import { PaymentDeclinedError, type PaymentStatus } from '../../gateways/PaymentGateway';
+import { AppDataSource } from '../../db/dataSource';
+import { OrderRepository } from '../../repositories/OrderRepository';
 import { logger } from '../../util/logger';
-
 import { ReservationService } from '../ReservationService/ReservationService';
 import { WarehouseService } from '../WarehouseService/WarehouseService';
 import { validateItemsToOrder } from './helpers/validateItemsToOrder';
@@ -9,8 +11,6 @@ import { buildPreTaxLineItems } from './helpers/buildPreTaxLineItems';
 import { buildTaxedLineItems } from './helpers/buildTaxedLineItems';
 import { persistOrder } from './helpers/persistOrder';
 import { chargeOrder } from './helpers/chargeOrder';
-import { confirmOrderAndReservations } from './helpers/confirmOrderAndReservations';
-import { releaseOrderAndReservations } from './helpers/releaseOrderAndReservations';
 import { deadLetterQueue } from '../../jobs/deadLetterQueue';
 
 export interface OrderToPlace {
@@ -85,16 +85,14 @@ class _OrderService {
       });
       paymentReference = reference;
 
-      // If payment succeeded, confirm the order and reservations.
-      // If payment is still pending, a reconciliation process will
-      // confirm or release the order later based on the payment status.
-      if (paymentStatus === 'succeeded') {
-        ({ order } = await confirmOrderAndReservations({
-          orderId: createdOrder.id,
-          reservationGroupId,
-          paymentReference,
-        }));
-      }
+      // At this point the charge is either successful or still pending; failed payments
+      // were thrown by chargeOrder so the compensation path below handles them.
+      ({ order } = await this.applyPaymentResult({
+        orderId: createdOrder.id,
+        reservationGroupId,
+        paymentReference,
+        paymentStatus,
+      }));
 
       logger.info(
         {
@@ -108,20 +106,13 @@ class _OrderService {
         'order_placed'
       );
 
-      return {
-        order,
-      };
+      return { order };
     } catch (error: unknown) {
       const failedOrder = order;
       try {
-        await releaseOrderAndReservations({
-          orderId: failedOrder?.id,
-          reservationGroupId,
-        });
+        await this.releaseOrderAndReservations({ orderId: failedOrder?.id, reservationGroupId });
       } catch (releaseError: unknown) {
-        // If release fails, stock is in an inconsistent
-        // state — enqueue for manual investigation.
-
+        // If release fails, stock is in an inconsistent state — enqueue for manual investigation.
         await deadLetterQueue.add('release-failed', {
           reservationGroupId,
           orderId: failedOrder?.id ?? null,
@@ -139,6 +130,61 @@ class _OrderService {
 
       throw error;
     }
+  }
+
+  // Applies a payment result to an order. Shared by placeOrder and the reconcileOrders job:
+  //   - succeeded → confirm reservations and mark the order CONFIRMED (atomically, so confirmed
+  //     reservations are never visible while the order still shows PENDING_PAYMENT)
+  //   - failed → surface as a declined charge so the caller runs the compensation path
+  //   - otherwise → not settled yet; persist the reference and leave it PENDING_PAYMENT for
+  //     reconcileOrders to resolve later
+  async applyPaymentResult({
+    orderId,
+    reservationGroupId,
+    paymentReference,
+    paymentStatus,
+  }: {
+    orderId: number;
+    reservationGroupId: string;
+    paymentReference: string;
+    paymentStatus: PaymentStatus;
+  }): Promise<{ order: Order }> {
+    if (paymentStatus === 'failed') {
+      throw new PaymentDeclinedError('payment failed after charge');
+    }
+
+    if (paymentStatus === 'succeeded') {
+      return AppDataSource.transaction(async (manager) => {
+        await ReservationService.confirmReservations({ reservationGroupId, manager });
+        const order = await OrderRepository.updateStatus({
+          orderId,
+          status: 'CONFIRMED',
+          paymentReference,
+          manager,
+        });
+        return { order };
+      });
+    }
+
+    const order = await OrderRepository.updateStatus({ orderId, status: 'PENDING_PAYMENT', paymentReference });
+    return { order };
+  }
+
+  // Releases an order's reservations and marks it FAILED (if the order was created), atomically.
+  // Shared by placeOrder's compensation path and the reconcileOrders job.
+  async releaseOrderAndReservations({
+    orderId,
+    reservationGroupId,
+  }: {
+    orderId?: number;
+    reservationGroupId: string;
+  }): Promise<void> {
+    await AppDataSource.transaction(async (manager) => {
+      await ReservationService.releaseReservations({ reservationGroupId, manager });
+      if (orderId) {
+        await OrderRepository.updateStatus({ orderId, status: 'FAILED', manager });
+      }
+    });
   }
 }
 
