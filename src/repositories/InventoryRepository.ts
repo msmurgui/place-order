@@ -18,6 +18,11 @@ class _InventoryRepository extends BaseRepository<Inventory> {
     warehouseId: number;
     productId: number;
   }): Promise<AvailableInventory | null> {
+    if (!Number.isInteger(warehouseId) || warehouseId <= 0 ||
+        !Number.isInteger(productId)   || productId <= 0) {
+      throw new Error(`InventoryRepository.getAvailable: invalid ids warehouseId=${warehouseId} productId=${productId}`);
+    }
+
     const rows = await this.dataSource.query<{ inventory_id: string; available: string }[]>(
       `SELECT i.id AS inventory_id,
               i.quantity - COALESCE(SUM(r.quantity), 0) AS available
