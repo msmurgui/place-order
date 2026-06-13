@@ -13,6 +13,9 @@ const schema = z.object({
   RESERVATION_EXPIRY_MINUTES: z.coerce.number().default(10),
   RATE_LIMIT_MAX: z.coerce.number().default(5),
   RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().default(60),
+  // Whether to trust X-Forwarded-* headers. Enable only when running behind a trusted
+  // proxy/LB, so req.ip is the real client; leaving it off avoids clients spoofing their IP.
+  TRUST_PROXY: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
 });
 
 const parsed = schema.safeParse(process.env);

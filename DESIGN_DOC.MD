@@ -106,7 +106,7 @@ src/
 │   └── orders.ts
 │
 ├── middleware/
-│   ├── rateLimiter.ts                      ← per-customer's id sliding window, Redis-backed
+│   ├── rateLimiter.ts                      ← per-IP sliding window, Redis-backed
 │   └── circuitBreaker.ts                   ← Redis-backed boolean flags per gateway
 │
 ├── gateways/
@@ -364,7 +364,7 @@ Circuit breaker flag `circuit:tax` checked before every call. Maps to `503` if o
 `POST /orders` middleware pipeline:
 
 ```
-1. rateLimiter middleware       ← 5 req / 60s sliding window, keyed on customer's IP
+1. rateLimiter middleware       ← 5 req / 60s sliding window, keyed on client IP (req.ip; needs `trust proxy` behind a load balancer)
 2. Zod schema validation        ← rejects malformed requests before hitting controller
 3. orderController.createOrder  ← delegates to controller
 ```
@@ -682,10 +682,10 @@ Sequential commits. Each item is roughly one logical unit of work.
 - [x] `WarehouseSelectionService` — eligible warehouse query + haversine sort
 - [x] `ReservationService` — per-product lock (check + insert within lock window), confirm, release
 - [x] `OrderService` (Facade) — orchestrates subtotal, warehouse selection, tax, reservation, payment, compensation, dead-letter queue
-- [x] Middleware — `rateLimiter.ts` (per-customer sliding window), `circuitBreaker.ts` (Redis flag reader)
+- [x] Middleware — `rateLimiter.ts` (per-IP sliding window), `circuitBreaker.ts` (Redis flag reader)
 - [x] Controller — `orderController.ts` with idempotency check + store
 - [x] Route — `POST /orders` pipeline (rate limit → validate → controller)
-- [ ] Express app wiring — `app.ts`, `src/index.ts` server entry
+- [x] Express app wiring — `app.ts`, `src/main.ts` server entry
 - [ ] BullMQ job: `expireReservations` (every 1 min)
 - [ ] BullMQ job: `reconcileOrders` (every 5 min)
 - [ ] Unit tests — `haversine`, `WarehouseSelectionService`, `DistributedLockService`, `ReservationService`, `TaxGateway`

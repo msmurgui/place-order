@@ -4,7 +4,7 @@
   "description": "POST /orders — production-ready order endpoint",
   "main": "dist/main.js",
   "scripts": {
-    "dev": "ts-node src/server.ts",
+    "dev": "ts-node src/main.ts",
     "build": "tsc",
     "start": "node dist/main.js",
     "test": "vitest run",
