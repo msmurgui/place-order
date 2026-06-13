@@ -13,7 +13,7 @@ import { confirmOrderAndReservations } from './helpers/confirmOrderAndReservatio
 import { releaseOrderAndReservations } from './helpers/releaseOrderAndReservations';
 import { deadLetterQueue } from '../../jobs/deadLetterQueue';
 
-interface OrderInput {
+export interface OrderToPlace {
   customerId: number;
   shippingAddress: string;
   items: { productId: number; quantity: number }[];
@@ -28,7 +28,7 @@ class _OrderService {
     items,
     cardNumber,
     idempotencyKey,
-  }: OrderInput): Promise<{ order: Order }> {
+  }: OrderToPlace): Promise<{ order: Order }> {
     const productByIdMap = await validateItemsToOrder(items);
 
     const warehouse = await WarehouseService.findClosestToFulfill({
