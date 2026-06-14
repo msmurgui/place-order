@@ -1,0 +1,79 @@
+import { Queue, Worker } from 'bullmq';
+import { AppDataSource } from '../../db/dataSource';
+import { InventoryRepository } from '../../repositories/InventoryRepository';
+import { ReservationRepository } from '../../repositories/ReservationRepository';
+import { logger } from '../../util/logger';
+import { bullConnection } from '../connection';
+
+const QUEUE_NAME = 'fulfill-reservations';
+// Runs nightly at 03:00, not on a tight interval. Fulfillment isn't time-sensitive, but it takes
+// write locks on inventory rows, so we defer it to a low-traffic window to keep that contention
+// off the hot order path. Cron uses the worker's local timezone — set TZ on the deployment.
+const FULFILL_CRON = '0 3 * * *';
+// Cap per run so a large backlog locks a bounded number of inventory rows rather than the whole
+// table at once. The remainder is picked up on the next night's run.
+const BATCH_SIZE = 500;
+
+export interface FulfillReservationsResult {
+  inventoriesDecremented: number;
+  reservationsReleased: number;
+}
+
+// Rolls confirmed reservations into physical stock: for each inventory row it decrements
+// quantity by the confirmed total and marks those reservations 'released'. Without this,
+// confirmed rows accumulate forever and getAvailable()'s SUM over them degrades linearly on
+// hot SKUs. Each inventory row is handled in its own short transaction so the decrement and
+// the release commit atomically without holding locks across the whole batch.
+export const runFulfillReservations = async (): Promise<FulfillReservationsResult> => {
+  const groups = await ReservationRepository.findConfirmedGrouped({ limit: BATCH_SIZE });
+
+  let inventoriesDecremented = 0;
+  let reservationsReleased = 0;
+
+  for (const group of groups) {
+    await AppDataSource.transaction(async (manager) => {
+      // Decrement first: if it would violate CHECK (quantity >= 0) the whole transaction rolls
+      // back and the reservations stay 'confirmed' for the next run (or manual review).
+      await InventoryRepository.decrementQuantity({
+        inventoryId: group.inventoryId,
+        amount: group.totalQuantity,
+        manager,
+      });
+
+      // Release exactly the rows we summed. The status guard makes overlapping runs safe — a
+      // row already released by a concurrent run is simply skipped.
+      await manager.query(
+        `UPDATE inventory_reservations
+         SET status = 'released'
+         WHERE id = ANY($1::int[])
+           AND status = 'confirmed'`,
+        [group.reservationIds]
+      );
+    });
+
+    inventoriesDecremented++;
+    reservationsReleased += group.reservationIds.length;
+  }
+
+  if (groups.length > 0) {
+    // Stands in for the inventory_fulfilled_total metric.
+    logger.info(
+      { event: 'reservations_fulfilled', inventoriesDecremented, reservationsReleased },
+      'confirmed reservations fulfilled'
+    );
+  }
+
+  return { inventoriesDecremented, reservationsReleased };
+};
+
+// Schedules the repeatable job and starts its worker. Queue/Worker are created here (not at
+// module load) so importing runFulfillReservations for tests doesn't open a Redis connection.
+export const startFulfillReservationsWorker = async (): Promise<Worker> => {
+  const queue = new Queue(QUEUE_NAME, { connection: bullConnection });
+  await queue.add(
+    'fulfill',
+    {},
+    { repeat: { pattern: FULFILL_CRON }, removeOnComplete: true, removeOnFail: 1000 }
+  );
+  return new Worker(QUEUE_NAME, async () => runFulfillReservations(), { connection: bullConnection });
+};

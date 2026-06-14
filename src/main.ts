@@ -4,6 +4,7 @@ import { createApp } from './app';
 import { env } from './config/env';
 import { AppDataSource } from './db/dataSource';
 import { startExpireReservationsWorker } from './jobs/expireReservations/expireReservations';
+import { startFulfillReservationsWorker } from './jobs/fulfillReservations/fulfillReservations';
 import { startReconcileOrdersWorker } from './jobs/reconcileOrders/reconcileOrders';
 import { redisClient } from './redis';
 import { logger } from './util/logger';
@@ -18,12 +19,14 @@ async function main(): Promise<void> {
   });
 
   const expireReservationsWorker = await startExpireReservationsWorker();
+  const fulfillReservationsWorker = await startFulfillReservationsWorker();
   const reconcileOrdersWorker = await startReconcileOrdersWorker();
 
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'shutting down');
     server.close();
     await expireReservationsWorker.close();
+    await fulfillReservationsWorker.close();
     await reconcileOrdersWorker.close();
     await AppDataSource.destroy();
     await redisClient.quit();
