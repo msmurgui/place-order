@@ -13,13 +13,16 @@
     "format": "prettier --write src",
     "typecheck": "tsc --noEmit",
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/db/dataSource.ts",
+    "migration:run:prod": "typeorm migration:run -d dist/db/dataSource.js",
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/db/dataSource.ts",
     "seed": "ts-node src/db/seeds/run.ts",
+    "seed:prod": "node dist/db/seeds/run.js",
     "seed:reset": "ts-node src/db/seeds/truncate.ts && ts-node src/db/seeds/run.ts",
     "demo": "RATE_LIMIT_MAX=1000 ts-node src/demo/demo.ts",
     "load-test": "RATE_LIMIT_MAX=1000 ts-node src/demo/load-test.ts"
   },
   "dependencies": {
+    "@types/swagger-ui-express": "^4.1.8",
     "bullmq": "^5.51.0",
     "dotenv": "^16.4.7",
     "express": "^5.0.1",
@@ -28,6 +31,7 @@
     "pino": "^9.6.0",
     "pino-http": "^10.3.0",
     "reflect-metadata": "^0.2.2",
+    "swagger-ui-express": "^5.0.1",
     "typeorm": "^0.3.20",
     "zod": "^3.24.1"
   },

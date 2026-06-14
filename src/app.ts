@@ -1,5 +1,7 @@
 import express, { type Express } from 'express';
+import swaggerUi from 'swagger-ui-express';
 import { env } from './config/env';
+import { openapiSpec } from './docs/openapi';
 import { errorHandler } from './middleware/errorHandler';
 import { ordersRouter } from './routes/orders';
 
@@ -14,6 +16,9 @@ export const createApp = (): Express => {
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok' });
   });
+
+  // Interactive API docs — browse and fire real requests at GET /docs.
+  app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
 
   app.use(ordersRouter);
 
