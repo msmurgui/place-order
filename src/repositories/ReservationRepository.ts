@@ -60,6 +60,25 @@ class _ReservationRepository extends BaseRepository<InventoryReservation> {
     }));
   }
 
+  // Marks the given confirmed reservations as 'released'. The status = 'confirmed' guard makes
+  // overlapping fulfillment runs safe — a row already released by a concurrent run is skipped.
+  async releaseConfirmedByIds({
+    reservationIds,
+    manager,
+  }: {
+    reservationIds: number[];
+    manager?: EntityManager;
+  }): Promise<void> {
+    if (reservationIds.length === 0) return;
+    await this.getRepo(manager)
+      .createQueryBuilder()
+      .update()
+      .set({ status: 'released' })
+      .where('id IN (:...reservationIds)', { reservationIds })
+      .andWhere('status = :status', { status: 'confirmed' })
+      .execute();
+  }
+
   async confirmByGroupId({
     reservationGroupId,
     manager,

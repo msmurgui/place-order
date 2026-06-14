@@ -108,7 +108,7 @@ npm run seed
 RATE_LIMIT_MAX=1000 npm run dev
 ```
 
-> Each run consumes real inventory — re-run `npm run seed` if stock runs low before re-running a script.
+> Each run consumes real inventory — re-run `npm run seed` to add more stock or `npm run seed:reset` to reset if stock runs low before re-running a script.
 
 ### `demo` — feature walkthrough
 
@@ -116,7 +116,7 @@ RATE_LIMIT_MAX=1000 npm run dev
 npm run demo
 ```
 
-Steps through 8 scenarios with colour-coded pass/fail output, proving the core behaviours: happy-path ordering with tax, closest-warehouse routing, idempotent retries (no double-charge), payment-decline with reservation release, insufficient-inventory rejection, payment/tax circuit breakers, and a concurrent burst confirming with unique order IDs.
+Steps through 8 scenarios with colour-coded pass/fail output, proving the core behaviors: happy-path ordering with tax, closest-warehouse routing, idempotent retries (no double-charge), payment-decline with reservation release, insufficient-inventory rejection, payment/tax circuit breakers, and a concurrent burst confirming with unique order IDs.
 
 ![demo output](docs/demo-output.png)
 

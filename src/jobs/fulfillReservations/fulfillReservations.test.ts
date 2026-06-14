@@ -3,7 +3,7 @@ import type { EntityManager } from 'typeorm';
 
 vi.mock('../../util/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() } }));
 vi.mock('../../repositories/ReservationRepository', () => ({
-  ReservationRepository: { findConfirmedGrouped: vi.fn() },
+  ReservationRepository: { findConfirmedGrouped: vi.fn(), releaseConfirmedByIds: vi.fn() },
 }));
 vi.mock('../../repositories/InventoryRepository', () => ({
   InventoryRepository: { decrementQuantity: vi.fn() },
@@ -24,6 +24,7 @@ import { runFulfillReservations } from './fulfillReservations';
 
 beforeEach(() => {
   vi.mocked(ReservationRepository.findConfirmedGrouped).mockResolvedValue([]);
+  vi.mocked(ReservationRepository.releaseConfirmedByIds).mockResolvedValue(undefined);
   vi.mocked(InventoryRepository.decrementQuantity).mockResolvedValue(undefined);
   vi.mocked(fakeManager.query).mockResolvedValue(undefined as never);
 });
@@ -52,9 +53,15 @@ describe('runFulfillReservations', () => {
       amount: 3,
       manager: fakeManager,
     });
-    // Releases exactly the summed rows, guarded on status = 'confirmed'.
-    expect(fakeManager.query).toHaveBeenCalledWith(expect.stringContaining("status = 'released'"), [[1, 2]]);
-    expect(fakeManager.query).toHaveBeenCalledWith(expect.stringContaining("status = 'released'"), [[3]]);
+    // Releases exactly the summed rows via the repository (status guard lives there).
+    expect(ReservationRepository.releaseConfirmedByIds).toHaveBeenCalledWith({
+      reservationIds: [1, 2],
+      manager: fakeManager,
+    });
+    expect(ReservationRepository.releaseConfirmedByIds).toHaveBeenCalledWith({
+      reservationIds: [3],
+      manager: fakeManager,
+    });
     expect(result).toEqual({ inventoriesDecremented: 2, reservationsReleased: 3 });
     expect(logger.info).toHaveBeenCalled();
   });

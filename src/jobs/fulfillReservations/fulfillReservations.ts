@@ -8,7 +8,7 @@ import { bullConnection } from '../connection';
 const QUEUE_NAME = 'fulfill-reservations';
 // Runs nightly at 03:00, not on a tight interval. Fulfillment isn't time-sensitive, but it takes
 // write locks on inventory rows, so we defer it to a low-traffic window to keep that contention
-// off the hot order path. Cron uses the worker's local timezone — set TZ on the deployment.
+// off the hot order path. Improvement: analyze when the actual low-traffic window is
 const FULFILL_CRON = '0 3 * * *';
 // Cap per run so a large backlog locks a bounded number of inventory rows rather than the whole
 // table at once. The remainder is picked up on the next night's run.
@@ -19,11 +19,8 @@ export interface FulfillReservationsResult {
   reservationsReleased: number;
 }
 
-// Rolls confirmed reservations into physical stock: for each inventory row it decrements
-// quantity by the confirmed total and marks those reservations 'released'. Without this,
-// confirmed rows accumulate forever and getAvailable()'s SUM over them degrades linearly on
-// hot SKUs. Each inventory row is handled in its own short transaction so the decrement and
-// the release commit atomically without holding locks across the whole batch.
+// Rolls confirmed reservations into physical stock. Each inventory row is decremented and
+// its reservations marked released in a short transaction to prevent lock contention.
 export const runFulfillReservations = async (): Promise<FulfillReservationsResult> => {
   const groups = await ReservationRepository.findConfirmedGrouped({ limit: BATCH_SIZE });
 
@@ -40,15 +37,12 @@ export const runFulfillReservations = async (): Promise<FulfillReservationsResul
         manager,
       });
 
-      // Release exactly the rows we summed. The status guard makes overlapping runs safe — a
-      // row already released by a concurrent run is simply skipped.
-      await manager.query(
-        `UPDATE inventory_reservations
-         SET status = 'released'
-         WHERE id = ANY($1::int[])
-           AND status = 'confirmed'`,
-        [group.reservationIds]
-      );
+      // Release exactly the rows we summed; the repository's status guard makes overlapping
+      // runs safe — a row already released by a concurrent run is simply skipped.
+      await ReservationRepository.releaseConfirmedByIds({
+        reservationIds: group.reservationIds,
+        manager,
+      });
     });
 
     inventoriesDecremented++;
@@ -75,5 +69,7 @@ export const startFulfillReservationsWorker = async (): Promise<Worker> => {
     {},
     { repeat: { pattern: FULFILL_CRON }, removeOnComplete: true, removeOnFail: 1000 }
   );
-  return new Worker(QUEUE_NAME, async () => runFulfillReservations(), { connection: bullConnection });
+  return new Worker(QUEUE_NAME, async () => runFulfillReservations(), {
+    connection: bullConnection,
+  });
 };
