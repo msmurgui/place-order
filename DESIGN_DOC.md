@@ -12,9 +12,34 @@ Key guarantees:
 
 ---
 
+## Contents
+
+- [Context](#context)
+- [Tech Stack](#tech-stack)
+- [Architecture — Four Layers](#architecture--four-layers)
+- [Project Structure](#project-structure)
+- [Database Schema](#database-schema)
+- [Temporal Data Integrity — Order Snapshots](#temporal-data-integrity--order-snapshots)
+- [Inventory Management System](#inventory-management-system)
+- [Tax Gateway](#tax-gateway)
+- [Layer Responsibilities in Detail](#layer-responsibilities-in-detail)
+- [Compensating Transactions + Dead Letter Queue](#compensating-transactions--dead-letter-queue)
+- [Idempotency](#idempotency)
+- [Circuit Breakers](#circuit-breakers)
+- [Type Safety](#type-safety)
+- [Observability](#observability)
+- [Background Jobs](#background-jobs)
+- [Demo & Load Testing](#demo--load-testing)
+- [Verification](#verification)
+- [Implementation](#implementation)
+
+---
+
 ## Context
 
 Standalone endpoint for warehouse-based order fulfillment. A customer submits an order (shipping address + items + credit card); the server selects the closest warehouse that can fulfill all items, reserves inventory atomically via an **append-only reservation table**, charges the card inline, and returns the confirmed order.
+
+> The end-to-end order placement flow is detailed step by step in [docs/order-flow.md](docs/order-flow.md).
 
 ---
 
@@ -597,7 +622,7 @@ Accessing `.paymentReference` on a `PENDING_PAYMENT` order is a compile-time err
 3. Emit metric: inventory_reservations_expired_total++
 ```
 
-**`src/jobs/fulfillReservations.ts`** — BullMQ repeatable, every 5 minutes. Rolls `confirmed` reservations into physical stock so they stop accumulating: the availability query sums every `confirmed` row, so without this a hot SKU would build unbounded rows and the query would degrade linearly.
+**`src/jobs/fulfillReservations.ts`** — BullMQ repeatable, nightly at 03:00. Rolls `confirmed` reservations into physical stock so they stop accumulating: the availability query sums every `confirmed` row, so without this a hot SKU would build unbounded rows and the query would degrade linearly. It's not time-sensitive (a `confirmed` reservation keeps holding stock until it runs) but it takes write locks on inventory rows, so it runs in a low-traffic window to keep that contention off the hot order path.
 
 ```
 1. ReservationRepository.findConfirmedGrouped({ limit: 500 })
@@ -642,8 +667,8 @@ For setup, prerequisites, and a per-scenario breakdown, see **[`src/demo/README.
 ```bash
 # DB setup
 createdb orders_dev
-npx typeorm migration:run -d src/db/dataSource.ts
-npx ts-node src/db/seeds/run.ts
+npm run migration:run
+npm run seed
 
 # Start Redis
 redis-server --daemonize yes
@@ -655,14 +680,16 @@ npm run dev
 curl -X POST http://localhost:3000/orders \
   -H 'Content-Type: application/json' \
   -d '{
-    "customerId": 1,
-    "shippingAddress": "123 Main St, Seattle WA",
-    "items": [
-      { "productId": 1, "quantity": 2 },
-      { "productId": 2, "quantity": 1 }
-    ],
-    "cardNumber": "4111111111111111",
-    "idempotencyKey": "test-001"
+    "orderToPlace": {
+      "customerId": 1,
+      "shippingAddress": "123 Main St, Seattle WA",
+      "items": [
+        { "productId": 1, "quantity": 2 },
+        { "productId": 2, "quantity": 1 }
+      ],
+      "cardNumber": "4111111111111111",
+      "idempotencyKey": "test-001"
+    }
   }'
 
 # Run tests
@@ -677,7 +704,7 @@ npm run load-test
 
 ## Implementation
 
-Sequential commits. Each item is roughly one logical unit of work.
+List of tasks to track the implementation progress:
 
 - [x] Project scaffold — `package.json`, `tsconfig.json` (strict mode), ESLint, Prettier, Vitest config, `src/config/env.ts`
 - [x] TypeORM setup — `src/db/dataSource.ts`, base entity config, migration runner script
@@ -698,7 +725,7 @@ Sequential commits. Each item is roughly one logical unit of work.
 - [x] Route — `POST /orders` pipeline (rate limit → validate → controller)
 - [x] Express app wiring — `app.ts`, `src/main.ts` server entry
 - [x] BullMQ job: `expireReservations` (every 1 min)
-- [x] BullMQ job: `fulfillReservations` (every 5 min)
+- [x] BullMQ job: `fulfillReservations` (nightly at 03:00)
 - [x] BullMQ job: `reconcileOrders` (every 5 min)
 - [x] Unit tests — `haversine`, `WarehouseSelectionService`, `ReservationService`, `TaxGateway`, jobs, controller
 - [x] Demo + load-test scripts — `src/demo/` (see `src/demo/README.md`)
