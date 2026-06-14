@@ -18,6 +18,7 @@
     "seed": "ts-node src/db/seeds/run.ts",
     "seed:prod": "node dist/db/seeds/run.js",
     "seed:reset": "ts-node src/db/seeds/truncate.ts && ts-node src/db/seeds/run.ts",
+    "seed:reset:prod": "node dist/db/seeds/truncate.js && node dist/db/seeds/run.js",
     "demo": "RATE_LIMIT_MAX=1000 ts-node src/demo/demo.ts",
     "load-test": "RATE_LIMIT_MAX=1000 ts-node src/demo/load-test.ts"
   },

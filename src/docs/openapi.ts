@@ -36,22 +36,55 @@ export const openapiSpec = {
         description:
           'Finds a warehouse that can fulfill all items, reserves stock, charges the card, and ' +
           'returns the confirmed order. Idempotent on `idempotencyKey` — replaying the same key ' +
-          'returns the original response without re-charging.',
+          'returns the original response without re-charging.\n\n' +
+          '**Two demo products let you test both inventory outcomes** (pick from the Examples dropdown below):\n' +
+          '- **`productId: 5` — Digital Gift Card**: effectively unlimited stock in every warehouse, so the order always succeeds with `201`. Order any quantity.\n' +
+          '- **`productId: 4` — Sold-Out Collectible**: zero stock everywhere, so the order always fails with `409` (insufficient inventory).\n\n' +
+          '_Tip: give each distinct order a fresh `idempotencyKey` — reusing a key returns the original cached response instead of placing a new order._',
         requestBody: {
           required: true,
           content: {
             'application/json': {
               schema: { $ref: '#/components/schemas/PlaceOrderRequest' },
-              example: {
-                orderToPlace: {
-                  customerId: 1,
-                  shippingAddress: '123 Main St, Seattle WA',
-                  items: [
-                    { productId: 1, quantity: 2 },
-                    { productId: 2, quantity: 1 },
-                  ],
-                  cardNumber: '4111111111111111',
-                  idempotencyKey: 'demo-001',
+              examples: {
+                standard: {
+                  summary: 'Standard order — in-stock products (201)',
+                  value: {
+                    orderToPlace: {
+                      customerId: 1,
+                      shippingAddress: '123 Main St, Seattle WA',
+                      items: [
+                        { productId: 1, quantity: 2 },
+                        { productId: 2, quantity: 1 },
+                      ],
+                      cardNumber: '4111111111111111',
+                      idempotencyKey: 'demo-standard-001',
+                    },
+                  },
+                },
+                infiniteStock: {
+                  summary: 'Always succeeds — Digital Gift Card (productId 5, unlimited stock)',
+                  value: {
+                    orderToPlace: {
+                      customerId: 1,
+                      shippingAddress: '123 Main St, Seattle WA',
+                      items: [{ productId: 5, quantity: 999 }],
+                      cardNumber: '4111111111111111',
+                      idempotencyKey: 'demo-infinite-001',
+                    },
+                  },
+                },
+                outOfStock: {
+                  summary: 'Always 409 — Sold-Out Collectible (productId 4, zero stock)',
+                  value: {
+                    orderToPlace: {
+                      customerId: 1,
+                      shippingAddress: '123 Main St, Seattle WA',
+                      items: [{ productId: 4, quantity: 1 }],
+                      cardNumber: '4111111111111111',
+                      idempotencyKey: 'demo-outofstock-001',
+                    },
+                  },
                 },
               },
             },

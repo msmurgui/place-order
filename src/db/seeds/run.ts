@@ -11,11 +11,17 @@ async function seed(): Promise<void> {
       ON CONFLICT (email) DO NOTHING
     `);
 
+    // The first three products (ids 1–3) back demo.ts and load-test.ts — do not reorder them.
+    // The last two (ids 4 & 5) are reviewer-facing demo products with deterministic stock:
+    //   - DEMO-OOS-001 (id 4): zero stock everywhere — exercises the out-of-stock (409) path.
+    //   - DEMO-INF-001 (id 5): effectively unlimited stock — always fulfillable.
     await AppDataSource.query(`
       INSERT INTO products (name, sku, price, description, tax_code) VALUES
         ('Organic Apples',      'APPL-ORG-1KG', 5.00,  'Fresh organic apples, 1 kg bag',        'GROCERY'),
         ('Wireless Headphones', 'ELEC-WH-001',  80.00, 'Over-ear noise-cancelling headphones',  'ELECTRONICS'),
-        ('USB Keyboard',        'COMP-KB-001',  45.00, 'Mechanical USB keyboard',               'STANDARD')
+        ('USB Keyboard',        'COMP-KB-001',  45.00, 'Mechanical USB keyboard',               'STANDARD'),
+        ('Sold-Out Collectible','DEMO-OOS-001', 25.00, 'Demo: intentionally out of stock everywhere (tests the 409 path)', 'STANDARD'),
+        ('Digital Gift Card',   'DEMO-INF-001', 50.00, 'Demo: effectively unlimited stock everywhere (always fulfillable)', 'STANDARD')
       ON CONFLICT (sku) DO NOTHING
     `);
 
@@ -41,7 +47,12 @@ async function seed(): Promise<void> {
         ('Seattle Warehouse',     'COMP-KB-001',    '0'),
         ('Los Angeles Warehouse', 'APPL-ORG-1KG', '100'),
         ('Los Angeles Warehouse', 'ELEC-WH-001',   '30'),
-        ('Los Angeles Warehouse', 'COMP-KB-001',   '60')
+        ('Los Angeles Warehouse', 'COMP-KB-001',   '60'),
+        -- Demo products: zero everywhere (out-of-stock) and ~1B (effectively infinite).
+        ('Seattle Warehouse',     'DEMO-OOS-001',          '0'),
+        ('Los Angeles Warehouse', 'DEMO-OOS-001',          '0'),
+        ('Seattle Warehouse',     'DEMO-INF-001', '1000000000'),
+        ('Los Angeles Warehouse', 'DEMO-INF-001', '1000000000')
       ) AS v(warehouse_name, sku, qty)
       JOIN warehouses w ON w.name = v.warehouse_name
       JOIN products   p ON p.sku  = v.sku
