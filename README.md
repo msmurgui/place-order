@@ -3,6 +3,7 @@
 ## Contents
 
 - [Overview](#overview)
+- [Live Demo](#live-demo)
 - [Documentation](#documentation)
 - [Prerequisites](#prerequisites)
 - [Setup](#setup)
@@ -19,6 +20,20 @@ Key guarantees:
 - **Idempotency** — duplicate submissions (retries, double-clicks, network timeouts) return the original response without re-charging.
 - **Financial consistency** — payment charges that cannot be immediately confirmed land in a `PENDING_PAYMENT` state and are reconciled by a background job rather than being incorrectly failed.
 - **Resilience** — circuit breakers on all external gateways, retry logic for transient failures, and a dead-letter queue for unresolvable compensation failures.
+
+## Live Demo
+
+A live instance is hosted on Railway with interactive Swagger docs — no local setup required:
+
+**→ [https://place-order-production-411e.up.railway.app/docs](https://place-order-production-411e.up.railway.app/docs)**
+
+Open the `POST /orders` endpoint, hit **Try it out**, and pick a scenario from the **Examples** dropdown:
+
+- **Standard order** — in-stock products, returns `201` with a full receipt.
+- **Always succeeds** — Digital Gift Card (`productId: 5`), effectively unlimited stock.
+- **Always 409** — Sold-Out Collectible (`productId: 4`), zero stock everywhere.
+
+> Use a fresh `idempotencyKey` for each distinct order — reusing a key returns the original cached response instead of placing a new one.
 
 ## Documentation
 
