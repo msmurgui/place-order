@@ -119,8 +119,8 @@ Two scripts exercise the live `POST /orders` service end to end — over real HT
 npm run migration:run
 npm run seed
 
-# 2. Start the server with the rate limit relaxed (separate terminal)
-RATE_LIMIT_MAX=1000 npm run dev
+# 2. Start the server in demo mode - this sets RATE_LIMIT_MAX=1000 to avoid request limiting errors (separate terminal)
+npm run dev-for-demo
 ```
 
 > Each run consumes real inventory — re-run `npm run seed` to add more stock or `npm run seed:reset` to reset if stock runs low before re-running a script.

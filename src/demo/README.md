@@ -9,11 +9,11 @@ Two scripts for exploring and stress-testing the `POST /orders` service. Both ru
 npm run migration:run
 npm run seed
 
-# 2. Start the server with the rate limit relaxed (terminal 1)
-RATE_LIMIT_MAX=1000 npm run dev
+# 2. Start the server in demo mode - this sets RATE_LIMIT_MAX=1000 to avoid request limiting errors (separate terminal)
+npm run dev-for-demo
 ```
 
-> **Re-seeding**: each demo run consumes real inventory. Run `npm run seed` again before re-running if stock runs low (the seed is idempotent for warehouses and products, but will add a new customer row on each run — safe to ignore).
+> **Re-seeding**: each run consumes real inventory — re-run `npm run seed` to add more stock or `npm run seed:reset` to reset if stock runs low (the seed is idempotent for warehouses and products, but will add a new customer row on each run — safe to ignore).
 
 ---
 

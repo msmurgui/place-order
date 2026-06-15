@@ -5,6 +5,7 @@
   "main": "dist/main.js",
   "scripts": {
     "dev": "ts-node src/main.ts",
+    "dev-for-demo": "RATE_LIMIT_MAX=1000 ts-node src/main.ts",
     "build": "tsc",
     "start": "node dist/main.js",
     "test": "vitest run",
