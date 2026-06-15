@@ -13,6 +13,8 @@ export const placeOrderSchema = z.object({
         })
       )
       .min(1),
+    // For simplicity, we just require a non-empty string for the card number. 
+    // In a real application, a more robust validation and tokenization would be necessary.
     cardNumber: z.string().min(1),
     // Idempotency key is required to prevent duplicate orders from retries
     idempotencyKey: z.string().min(1),

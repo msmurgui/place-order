@@ -11,6 +11,14 @@ interface OrderItem {
 }
 
 class _WarehouseService {
+  /**
+   * Finds the closest warehouse that can fulfill the given order items.
+   *
+   * @param params
+   * @param params.orderItems The items to order, with productId and quantity.
+   * @param params.shippingAddress The shipping address to calculate distance from.
+   * @returns The closest warehouse that can fulfill the order.
+   */
   async findClosestToFulfill({
     orderItems,
     shippingAddress,
@@ -19,7 +27,7 @@ class _WarehouseService {
     shippingAddress: string;
   }): Promise<Warehouse> {
     const [warehouses, shippingCoords] = await Promise.all([
-      WarehouseRepository.findAll(), // TODO: Analyze if this query can bounded - larger warehouses dataset might cause performance issues
+      WarehouseRepository.findAll(), // TODO: Analyze if this query could be bounded - larger warehouses dataset might cause performance issues
       GeocodeService.geocode(shippingAddress),
     ]);
 
@@ -31,9 +39,9 @@ class _WarehouseService {
     // For each warehouse, check if it can fulfill the order
     // and calculate distance to shipping address
     //
-    // Note: This can be optimized by parallelizing inventory checks, but for
+    // Note: This can be optimized by parallelizing inventory checks, but
     // could also lead to increased load on the database if there are many
-    // warehouses and order items. TODO: Analyze this!
+    // warehouses and order items. TODO: Analyze if worth the parallelization.
     for (const warehouse of warehouses) {
       const availability = await Promise.all(
         orderItems.map((item) =>

@@ -8,7 +8,7 @@ import { bullConnection } from '../connection';
 const QUEUE_NAME = 'fulfill-reservations';
 // Runs nightly at 03:00, not on a tight interval. Fulfillment isn't time-sensitive, but it takes
 // write locks on inventory rows, so we defer it to a low-traffic window to keep that contention
-// off the hot order path. Improvement: analyze when the actual low-traffic window is
+// off the hot order path. TODO: analyze when the actual low-traffic window is
 const FULFILL_CRON = '0 3 * * *';
 // Cap per run so a large backlog locks a bounded number of inventory rows rather than the whole
 // table at once. The remainder is picked up on the next night's run.
@@ -21,6 +21,9 @@ export interface FulfillReservationsResult {
 
 // Rolls confirmed reservations into physical stock. Each inventory row is decremented and
 // its reservations marked released in a short transaction to prevent lock contention.
+
+// TODO: analyze with actual user experience if this should be an event triggered service
+// rather than a scheduled job
 export const runFulfillReservations = async (): Promise<FulfillReservationsResult> => {
   const groups = await ReservationRepository.findConfirmedGrouped({ limit: BATCH_SIZE });
 

@@ -7,6 +7,18 @@ import { assertCircuitClosed } from '../../../middleware/circuitBreaker';
 import { logger } from '../../../util/logger';
 import { withRetry } from '../../../util/retry';
 
+/**
+ * Charges an order using the payment gateway.
+ *
+ * @param params
+ * @param params.orderId The ID of the order to charge
+ * @param params.orderItemIds The IDs of the order items
+ * @param params.total The total amount to charge, including taxes.
+ * @param params.cardNumber The card number to charge for the order. On a more robust
+ *                          implementation, this would likely be a token representing
+ *                          the card details, not the raw card number.
+ * @returns An object containing the payment reference and status.
+ */
 export const chargeOrder = async ({
   orderId,
   orderItemIds,

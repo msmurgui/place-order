@@ -23,8 +23,7 @@ export const placeOrderController = async (
 
   if (!claimed) {
     // Either a completed duplicate (cached response present) or a still-in-flight request
-    // (only the "pending" sentinel, which get() reports as null).
-    const cached = (await IdempotencyRepository.get(idempotencyKey)) as CachedResponse | null;
+    const cached = (await IdempotencyRepository.get<CachedResponse>(idempotencyKey));
     if (cached) {
       res.status(cached.statusCode).json(cached.body);
       return;
@@ -45,7 +44,7 @@ export const placeOrderController = async (
       status: order.status,
     };
 
-    // Overwrites the "pending" sentinel with the real response (plain SET EX, no NX).
+    // Update or set the cache with the real response now that processing is complete.
     await IdempotencyRepository.set({
       key: idempotencyKey,
       value: { statusCode: 201, body },

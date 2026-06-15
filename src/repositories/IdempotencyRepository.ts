@@ -7,13 +7,13 @@ const KEY_PREFIX = 'idempotency:';
 const PENDING_SENTINEL = 'pending';
 
 class _IdempotencyRepository {
-  async get(key: string): Promise<Record<string, unknown> | null> {
+  async get<T = Record<string, unknown>>(key: string): Promise<T | null> {
     const raw = await redisClient.get(`${KEY_PREFIX}${key}`);
     if (raw === null) return null;
     // A concurrent request may read the "pending" sentinel before the owner writes the real
     // response. JSON.parse would throw on it — treat it as "no cached response yet" instead.
     try {
-      return JSON.parse(raw) as Record<string, unknown>;
+      return JSON.parse(raw) as T;
     } catch {
       return null;
     }

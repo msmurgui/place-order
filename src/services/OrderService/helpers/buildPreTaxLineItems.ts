@@ -12,6 +12,13 @@ export interface PreTaxLineItem {
   taxCode: string;
 }
 
+/**
+ * Builds pre-tax line items and calculates the order subtotal.
+ * 
+ * @param items The items to order, with productId and quantity.
+ * @param productByIdMap A map of productId to Product, used to get product details and price.
+ * @returns An object containing the array of pre-tax line items and the order subtotal.
+ */
 export const buildPreTaxLineItems = (
   items: { productId: number; quantity: number }[],
   productByIdMap: Map<number, Product>

@@ -12,6 +12,16 @@ interface ReservationItem {
 }
 
 class _ReservationService {
+  /**
+   * Creates reservations for the given warehouse and items, grouped by reservationGroupId.
+   * Reservations will expire after a configured amount of time if not confirmed or released.
+   *
+   * @param params
+   * @param params.warehouseId The ID of the warehouse to reserve inventory in.
+   * @param params.reservationItems The items to reserve, with productId and quantity.
+   * @param params.reservationGroupId A unique ID to group these reservations together (not order_id).
+   * @returns Resolves when reservations are successfully created; rejects with InsufficientInventoryError if any item cannot be reserved.
+   */
   async createReservations({
     warehouseId,
     reservationItems,
@@ -31,7 +41,7 @@ class _ReservationService {
       await AppDataSource.transaction(async (manager) => {
         // Serialize concurrent orders for this (warehouseId, productId) to prevent overselling.
         // The lock is held only for the availability check + reservation insert below, and released
-        // when this transaction commits/rolls back. Raw SQL lives in the data layer (InventoryRepository).
+        // when this transaction commits/rolls back.
         await InventoryRepository.lockForReservation({
           warehouseId,
           productId: reservationItem.productId,
@@ -59,17 +69,32 @@ class _ReservationService {
           manager
         );
 
-        logger.info({ warehouseId, productId: reservationItem.productId, reservationGroupId }, 'reservation created');
+        logger.info(
+          { warehouseId, productId: reservationItem.productId, reservationGroupId },
+          'reservation created'
+        );
       });
     }
   }
 
-  async confirmReservations({ reservationGroupId, manager }: { reservationGroupId: string; manager?: EntityManager }): Promise<void> {
+  async confirmReservations({
+    reservationGroupId,
+    manager,
+  }: {
+    reservationGroupId: string;
+    manager?: EntityManager;
+  }): Promise<void> {
     await ReservationRepository.confirmByGroupId({ reservationGroupId, manager });
     logger.info({ reservationGroupId }, 'reservations confirmed');
   }
 
-  async releaseReservations({ reservationGroupId, manager }: { reservationGroupId: string; manager?: EntityManager }): Promise<void> {
+  async releaseReservations({
+    reservationGroupId,
+    manager,
+  }: {
+    reservationGroupId: string;
+    manager?: EntityManager;
+  }): Promise<void> {
     await ReservationRepository.releaseByGroupId({ reservationGroupId, manager });
     logger.info({ reservationGroupId }, 'reservations released');
   }

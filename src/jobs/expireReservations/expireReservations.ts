@@ -33,9 +33,8 @@ export const runExpireReservations = async (): Promise<ExpireReservationsResult>
   });
 };
 
-// Schedules the repeatable job and starts the worker that processes it. Returns the worker
-// so the caller can close it on shutdown. The Queue/Worker are created here (not at module
-// load) so importing runExpireReservations for tests doesn't open a Redis connection.
+// Schedules the repeatable job and starts its worker. Queue/Worker are created here (not at
+// module load) so importing runExpireReservations for tests doesn't open a Redis connection.
 export const startExpireReservationsWorker = async (): Promise<Worker> => {
   const queue = new Queue(QUEUE_NAME, { connection: bullConnection });
 

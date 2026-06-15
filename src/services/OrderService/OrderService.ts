@@ -22,6 +22,20 @@ export interface OrderToPlace {
 }
 
 class _OrderService {
+  /**
+   * Places an order:
+   * 1. Validates items, reserves inventory, and calculates line items and taxes.
+   * 2. Persists the order with PENDING_PAYMENT status and charges the payment method.
+   * 3. Confirms reservations and updates order status based on payment result; releases reservations on failure.
+   *
+   * @param params
+   * @param params.customerId The ID of the customer placing the order.
+   * @param params.shippingAddress The shipping address for the order.
+   * @param params.items The items to order, with productId and quantity.
+   * @param params.cardNumber The card number to charge for the order.
+   * @param params.idempotencyKey A unique key to prevent duplicate orders from retries.
+   * @returns An object containing the placed order information.
+   */
   async placeOrder({
     customerId,
     shippingAddress,
@@ -131,13 +145,21 @@ class _OrderService {
       throw error;
     }
   }
-
-  // Applies a payment result to an order. Shared by placeOrder and the reconcileOrders job:
-  //   - succeeded → confirm reservations and mark the order CONFIRMED (atomically, so confirmed
-  //     reservations are never visible while the order still shows PENDING_PAYMENT)
-  //   - failed → surface as a declined charge so the caller runs the compensation path
-  //   - otherwise → not settled yet; persist the reference and leave it PENDING_PAYMENT for
-  //     reconcileOrders to resolve later
+  /**
+   * Applies a payment result to an order. Shared by placeOrder and the reconcileOrders job:
+   *   - succeeded → confirm reservations and mark the order CONFIRMED (atomically, so confirmed
+   *     reservations are never visible while the order still shows PENDING_PAYMENT)
+   *   - failed → surface as a declined charge so the caller runs the compensation path
+   *   - otherwise → not settled yet; persist the reference and leave it PENDING_PAYMENT for
+   *     reconcileOrders to resolve later
+   *
+   * @param params
+   * @param params.orderId The ID of the order to apply the payment result to.
+   * @param params.reservationGroupId The reservation group ID associated with the inventory reservations for this order
+   * @param params.paymentReference The reference returned by the payment gateway for the charge.
+   * @param params.paymentStatus The status of the payment, as returned by the payment gateway.
+   * @returns An object containing the updated order information.
+   */
   async applyPaymentResult({
     orderId,
     reservationGroupId,
@@ -166,12 +188,23 @@ class _OrderService {
       });
     }
 
-    const order = await OrderRepository.updateStatus({ orderId, status: 'PENDING_PAYMENT', paymentReference });
+    const order = await OrderRepository.updateStatus({
+      orderId,
+      status: 'PENDING_PAYMENT',
+      paymentReference,
+    });
     return { order };
   }
 
-  // Releases an order's reservations and marks it FAILED (if the order was created), atomically.
-  // Shared by placeOrder's compensation path and the reconcileOrders job.
+  /**
+   * Releases an order's reservations and marks it FAILED (if the order was created), atomically.
+   * Shared by placeOrder's compensation path and the reconcileOrders job.
+   *
+   * @param params
+   * @param params.orderId The ID of the order to release reservations for.
+   * @param params.reservationGroupId The reservation group ID associated with the inventory reservations for this order.
+   * @returns A promise that resolves when the operation is complete.
+   */
   async releaseOrderAndReservations({
     orderId,
     reservationGroupId,

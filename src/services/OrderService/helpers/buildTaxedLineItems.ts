@@ -8,6 +8,16 @@ export interface TaxedLineItem extends PreTaxLineItem {
   taxAmount: number;
 }
 
+/**
+ * Builds taxed line items by calling the TaxGateway to calculate taxes based on 
+ * the shipping address and pre-tax line items.
+ * 
+ * @param params
+ * @param params.shippingAddress The shipping address for the order, used for tax calculation.
+ * @param params.lineItems The pre-tax line items, including tax codes and subtotals.
+ * @param params.subtotal The order subtotal, used to calculate the total with taxes.
+ * @returns An object containing the array of taxed line items, the total amount including taxes, and the total tax amount.
+ */
 export const buildTaxedLineItems = async ({
   shippingAddress,
   lineItems,
